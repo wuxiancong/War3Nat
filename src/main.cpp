@@ -147,7 +147,6 @@ int main(int argc, char *argv[]) {
     // 设置应用信息
     QCoreApplication::setApplicationName("War3Nat");
     QCoreApplication::setApplicationVersion("3.0");
-    QCoreApplication::setOrganizationName("War3Launcher");
 
     QCommandLineParser parser;
     parser.setApplicationDescription("War3 NAT类型检测服务器 - 支持STUN协议");
