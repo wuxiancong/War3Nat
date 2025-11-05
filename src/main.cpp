@@ -350,8 +350,9 @@ int main(int argc, char *argv[]) {
     LOG_INFO("=== 服务器开始监听 ===");
 
     // 添加定时状态报告
+    // 添加定时状态报告
     QTimer *statusTimer = new QTimer(&app);
-    QObject::connect(statusTimer, &QTimer::timeout, [&nat, startTime = QDateTime::currentDateTime()]() {
+    QObject::connect(statusTimer, &QTimer::timeout, &app, [&nat, startTime = QDateTime::currentDateTime()]() {
         qint64 uptimeSeconds = startTime.secsTo(QDateTime::currentDateTime());
         qint64 days = uptimeSeconds / (24 * 3600);
         qint64 hours = (uptimeSeconds % (24 * 3600)) / 3600;
@@ -360,25 +361,24 @@ int main(int argc, char *argv[]) {
 
         QString uptimeStr;
         if (days > 0) {
-            uptimeStr = QString("%1天%2小时%3分钟").arg(days).arg(hours).arg(minutes).arg(seconds);
+            uptimeStr = QString("运行 %1天%2小时%3分钟%4秒").arg(days).arg(hours).arg(minutes).arg(seconds);
         } else if (hours > 0) {
-            uptimeStr = QString("%1小时%2分钟").arg(hours).arg(minutes).arg(seconds);
+            uptimeStr = QString("运行 %1小时%2分钟%3秒").arg(hours).arg(minutes).arg(seconds);
         } else if (minutes > 0) {
-            uptimeStr = QString("%1分钟%2秒").arg(minutes).arg(seconds);
+            uptimeStr = QString("运行 %1分钟%2秒").arg(minutes).arg(seconds);
         } else {
-            uptimeStr = QString("%1秒").arg(seconds);
+            uptimeStr = QString("运行 %1秒").arg(seconds);
         }
 
-        LOG_INFO(QString("🔄 服务器状态 - 运行时间: %1 - 状态: %2")
-                     .arg(uptimeStr, nat.isRunning() ? "运行中" : "已停止"));
+        LOG_INFO(QString("🔄 服务器状态 - %1 - 运行中: %2")
+                     .arg(uptimeStr, nat.isRunning() ? "是" : "否"));
     });
     statusTimer->start(30000); // 每30秒报告一次
 
     // 设置退出信号处理
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&nat]() {
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &nat, [&nat]() {
         LOG_INFO("正在关闭 War3Nat 服务器...");
         nat.stopServer();
-        LOG_INFO("War3Nat 服务器已关闭");
     });
 
     LOG_INFO("按 Ctrl+C 停止服务器");
