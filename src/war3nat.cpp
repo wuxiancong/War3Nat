@@ -441,7 +441,7 @@ void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &
     bool evenPortRequested = false;
 
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         switch (attr.type) {
         case TURN_ATTR_REQUESTED_TRANSPORT:
             if (attr.length >= 4) {
@@ -531,7 +531,7 @@ void War3Nat::handleRefreshRequest(const QByteArray &data, const QHostAddress &c
 
     // 解析LIFETIME属性
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == TURN_ATTR_LIFETIME && attr.length >= 4) {
             requestedLifetime = (static_cast<quint8>(attr.value[0]) << 24) |
                                 (static_cast<quint8>(attr.value[1]) << 16) |
@@ -578,7 +578,7 @@ void War3Nat::handleCreatePermission(const QByteArray &data, const QHostAddress 
 
     // 解析对等端地址
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == TURN_ATTR_XOR_PEER_ADDRESS && attr.length >= 8) {
             peerAddr = parseXorAddress(attr.value, 0, peerPort);
             break;
@@ -622,7 +622,7 @@ void War3Nat::handleChannelBind(const QByteArray &data, const QHostAddress &clie
 
     // 解析通道绑定属性
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == TURN_ATTR_CHANNEL_NUMBER && attr.length >= 4) {
             channelNumber = (static_cast<quint8>(attr.value[0]) << 8) | static_cast<quint8>(attr.value[1]);
         }
@@ -672,7 +672,7 @@ void War3Nat::handleSendIndication(const QByteArray &data, const QHostAddress &c
 
     // 解析发送指示
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == TURN_ATTR_XOR_PEER_ADDRESS && attr.length >= 8) {
             peerAddr = parseXorAddress(attr.value, 0, peerPort);
         } else if (attr.type == TURN_ATTR_DATA && attr.length > 0) {
@@ -707,7 +707,7 @@ void War3Nat::handleDataIndication(const QByteArray &data, const QHostAddress &c
     QByteArray relayData;
 
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == TURN_ATTR_CHANNEL_NUMBER && attr.length >= 4) {
             channelNumber = (static_cast<quint8>(attr.value[0]) << 8) | static_cast<quint8>(attr.value[1]);
             // 从通道绑定查找对等端
@@ -742,7 +742,7 @@ bool War3Nat::authenticateRequest(const QByteArray &data, const QByteArray &tran
 
     // 解析认证属性
     auto attributes = parseAttributes(data);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == STUN_ATTR_USERNAME) {
             parsedUsername = QString::fromUtf8(attr.value);
         } else if (attr.type == STUN_ATTR_REALM) {
@@ -1037,7 +1037,7 @@ RelayServer War3Nat::getOptimalRelay() const {
     RelayServer optimal;
     int bestScore = -1;
 
-    for (const RelayServer &server : m_relayServers) {
+    for (const RelayServer &server : qAsConst(m_relayServers)) {
         if (!server.enabled) continue;
         if (m_testResults.contains(server.id)) {
             const RelayTestResult &result = m_testResults[server.id];
@@ -1128,7 +1128,7 @@ bool War3Nat::processTestResponse(const QByteArray &data) {
     if (m_currentPacketSeq < m_testCount) {
         // 查找当前服务器并继续测试
         RelayServer currentServer;
-        for (const auto &srv : m_relayServers) {
+        for (const auto &srv : qAsConst(m_relayServers)) {
             if (srv.id == serverId) {
                 currentServer = srv;
                 break;
@@ -1235,7 +1235,7 @@ RelayServer War3Nat::selectOptimalRelay() {
     RelayServer bestServer;
     int bestScore = -1;
 
-    for (const RelayServer &server : m_relayServers) {
+    for (const RelayServer &server : qAsConst(m_relayServers)) {
         if (!server.enabled) continue;
 
         if (m_testResults.contains(server.id)) {
@@ -1750,7 +1750,7 @@ bool War3Nat::sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &ser
     if (response.size() < 20) return false;
 
     auto attributes = parseAttributes(response);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == STUN_ATTR_XOR_MAPPED_ADDRESS && attr.length >= 8) {
             quint8 family = static_cast<quint8>(attr.value[1]);
             if (family != 0x01) return false; // 只支持IPv4
