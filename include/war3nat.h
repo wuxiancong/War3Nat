@@ -14,6 +14,8 @@
 #include <QSharedPointer>
 #include <QThreadPool>
 
+// ==================== 枚举定义 ====================
+
 // STUN消息类型 (RFC 5389)
 enum STUNMessageType {
     STUN_BINDING_REQUEST = 0x0001,
@@ -66,6 +68,8 @@ enum NATType {
     NAT_BLOCKED
 };
 
+// ==================== 数据结构定义 ====================
+
 // 中继服务器信息
 struct RelayServer {
     QString id;
@@ -79,8 +83,39 @@ struct RelayServer {
     double jitter;
     double packetLoss;
     int score;
+
     RelayServer() : port(3478), priority(50), enabled(true),
         latency(0), jitter(0), packetLoss(0), score(0) {}
+};
+
+// 路径测试配置
+struct PathTestConfig {
+    QString testId;
+    QHostAddress serverAddress;
+    quint16 serverPort;
+    QHostAddress clientA;
+    QHostAddress clientB;
+    int testCount;
+    int timeoutMs;
+
+    PathTestConfig() : serverPort(3478), testCount(5), timeoutMs(3000) {}
+};
+
+// 路径测试结果
+struct PathTestResult {
+    QString testId;
+    QHostAddress serverAddress;
+    double aToServerLatency;
+    double bToServerLatency;
+    double totalLatency;
+    double jitter;
+    double packetLoss;
+    int score;
+    bool reachable;
+    QDateTime testTime;
+
+    PathTestResult() : aToServerLatency(0), bToServerLatency(0), totalLatency(0),
+        jitter(0), packetLoss(0), score(0), reachable(false) {}
 };
 
 // 中继分配信息
@@ -94,7 +129,7 @@ struct Allocation {
     quint32 lifetime;
     QSet<QPair<QString, quint16>> permissions;
     QMap<quint16, QPair<QString, quint16>> channelBindings;
-    QString username; // 新增: 用于认证
+    QString username;
 };
 
 // 测试结果
@@ -108,22 +143,37 @@ struct RelayTestResult {
     QDateTime testTime;
 };
 
+// 请求信息
 struct RequestInfo {
     QHostAddress clientAddr;
     quint16 clientPort;
     qint64 timestamp;
 };
 
+// STUN属性结构
+struct STUNAttribute {
+    quint16 type;
+    quint16 length;
+    QByteArray value;
+};
+
+// ==================== 前置声明 ====================
+
+class PathTestTask;
+
+// ==================== 主类定义 ====================
+
 class War3Nat : public QObject
 {
     Q_OBJECT
+
 public:
     explicit War3Nat(QObject *parent = nullptr);
     ~War3Nat();
 
     // 服务器管理
-    void stopServer();
     bool startServer(quint16 port = 3478);
+    void stopServer();
     bool isRunning() const { return m_isRunning; }
     quint16 serverPort() const { return m_serverPort; }
     void setMaxAllocations(int max) { m_maxAllocations = max; }
@@ -131,10 +181,10 @@ public:
     void setForcePortReuse(bool reuse) { m_forcePortReuse = reuse; }
 
     // 中继服务器管理
-    QVector<RelayServer> getRelayServers() const;
     void addRelayServer(const RelayServer &server);
     void removeRelayServer(const QString &serverId);
     void setRelayServers(const QVector<RelayServer> &servers);
+    QVector<RelayServer> getRelayServers() const;
 
     // 中继选择
     void startRelaySelection();
@@ -142,107 +192,167 @@ public:
     RelayServer getOptimalRelay() const;
     QVector<RelayTestResult> getTestResults() const;
 
-    // NAT类型检测 (客户端功能)
+    // 多路径测试
+    void startMultiPathTest(const QVector<PathTestConfig> &testConfigs);
+    void stopMultiPathTest();
+    void performPathTest(const PathTestConfig &config);
+    PathTestResult getOptimalPath() const;
+    QVector<PathTestResult> getPathTestResults() const;
+
+    // NAT类型检测
     NATType detectNATType(const QVector<RelayServer> &stunServers);
 
 signals:
+    // 中继选择信号
     void relaySelectionStarted();
     void relayTestProgress(const QString &serverId, int progress);
     void relayTestCompleted(const RelayTestResult &result);
     void optimalRelaySelected(const RelayServer &server);
     void relaySelectionFinished();
+
+    // 多路径测试信号
+    void multiPathTestStarted();
+    void pathTestProgress(const QString &testId, int progress);
+    void pathTestCompleted(const PathTestResult &result);
+    void optimalPathSelected(const PathTestResult &result);
+    void multiPathTestFinished();
+
+    // 分配管理信号
     void allocationCreated(const QString &allocationId, const QHostAddress &relayAddr, quint16 relayPort);
     void allocationRefreshed(const QString &allocationId, quint32 newLifetime);
     void allocationExpired(const QString &allocationId);
 
 private slots:
-    void onNextTest();
     void onReadyRead();
+    void onNextTest();
     void onTestTimeout();
     void onCleanupTimeout();
     void onAllocationExpiryCheck();
+    void onPathTestCompleted(const PathTestResult &result);
 
 private:
-    // STUN处理
+    // ==================== STUN处理 ====================
     void handleSTUNRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
     QByteArray buildSTUNResponse(const QByteArray &request, const QHostAddress &clientAddr, quint16 clientPort);
 
-    // TURN处理
+    // ==================== TURN处理 ====================
     void handleTURNRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
     void handleAllocateRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void handleRefreshRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void handleCreatePermission(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void handleSendIndication(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
     void handleChannelBind(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
+    void handleDataIndication(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
 
-    // 认证相关 (新增)
-    bool authenticateRequest(const QByteArray &data, const QByteArray &transactionId, QString &username, const QHostAddress &clientAddr, quint16 clientPort);
+    // ==================== 认证相关 ====================
+    bool authenticateRequest(const QByteArray &data, const QByteArray &transactionId, QString &username,
+                             const QHostAddress &clientAddr, quint16 clientPort);
+    QByteArray hmacSha1(const QByteArray &key, const QByteArray &message);
 
-    // TURN响应构建
-    QByteArray buildAllocateResponse(const QByteArray &transactionId, const QHostAddress &relayAddr, quint16 relayPort, quint32 lifetime = 600);
+    // ==================== TURN响应构建 ====================
+    QByteArray buildAllocateResponse(const QByteArray &transactionId, const QHostAddress &relayAddr,
+                                     quint16 relayPort, quint32 lifetime = 600);
     QByteArray buildRefreshResponse(const QByteArray &transactionId, quint32 lifetime);
     QByteArray buildCreatePermissionResponse(const QByteArray &transactionId);
     QByteArray buildChannelBindResponse(const QByteArray &transactionId);
     QByteArray buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason);
 
-    // 中继选择功能
-    RelayServer selectOptimalRelay();
+    // ==================== 中继选择功能 ====================
     void performRelayTest(const RelayServer &server);
-    void processTestResponse(const QByteArray &data);
-    void completeServerTest(const QString &serverId);
-    int calculateScore(const RelayTestResult &result);
     void sendTestPacket(const RelayServer &server, int seq);
+    bool processTestResponse(const QByteArray &data);
+    void completeServerTest(const QString &serverId);
+    RelayServer selectOptimalRelay();
+    int calculateScore(const RelayTestResult &result);
 
-    // 中继数据处理
+    // ==================== 多路径测试功能 ====================
+    QVector<qint64> testOneWayLatency(const QHostAddress &from, const QHostAddress &to,
+                                      quint16 port, int count);
+    void finishMultiPathTest();
+    PathTestResult selectOptimalPath() const;
+    int calculatePathScore(const PathTestResult &result);
+    double calculateAverageLatency(const QVector<qint64> &latencies);
+    double calculateJitter(const QVector<qint64> &latenciesA, const QVector<qint64> &latenciesB);
+    double calculatePacketLoss(const QVector<qint64> &latenciesA, const QVector<qint64> &latenciesB, int expectedCount);
+    bool parsePathTestResponse(const QByteArray &data, int expectedSequence, const QByteArray &expectedTestId);
+
+    // ==================== 中继数据处理 ====================
     void relayDataToPeer(const QByteArray &data, const QHostAddress &fromAddr, quint16 fromPort,
                          const QHostAddress &toAddr, quint16 toPort);
     bool validatePermission(const Allocation &allocation, const QHostAddress &peerAddr, quint16 peerPort);
 
-    // 工具方法
-    QByteArray generateNonce();
-    QByteArray generateTransactionId();
+    // ==================== 工具方法 ====================
+    // 公共辅助方法
+    QSharedPointer<Allocation> findAllocation(const QHostAddress &clientAddr, quint16 clientPort);
+    bool validateAllocation(const QHostAddress &clientAddr, quint16 clientPort,
+                            const QByteArray &transactionId, QByteArray &errorResponse);
+    QVector<STUNAttribute> parseAttributes(const QByteArray &data, int startPos = 20);
+    QHostAddress parseXorAddress(const QByteArray &data, int pos, quint16 &port);
+
+    // 数据包处理
+    QByteArray createTestPacket(int sequence, const QByteArray &serverId);
+    QByteArray createPathTestPacket(int sequence, const QByteArray &testId);
+    bool parseTestResponse(const QByteArray &data, int &sequence, QByteArray &serverId);
+
+    // 资源分配
     QHostAddress allocateRelayAddress();
     quint16 allocateRelayPort(bool evenPort);
-    QByteArray createTestPacket(int sequence, const QByteArray &serverId);
-    bool parseTestResponse(const QByteArray &data, int &sequence, QByteArray &serverId);
+
+    // 加密和ID生成
+    QByteArray generateTransactionId();
+    QByteArray generateNonce();
+
+    // NAT检测
+    bool sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr, quint16 serverPort,
+                                QByteArray &response, QHostAddress &mappedAddr, quint16 &mappedPort,
+                                bool changeIP = false, bool changePort = false);
+
+    // ==================== 日志方法 ====================
     void logRequest(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void logResponse(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
-    void logTURNAction(const QString &action, const QHostAddress &clientAddr, quint16 clientPort, const QString &details = "");
-
-    // NAT检测内部方法 (更新)
-    bool sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr, quint16 serverPort, QByteArray &response, QHostAddress &mappedAddr, quint16 &mappedPort, bool changeIP = false, bool changePort = false);
-
-    // HMAC-SHA1 计算 (新增)
-    QByteArray hmacSha1(const QByteArray &key, const QByteArray &message);
+    void logTURNAction(const QString &action, const QHostAddress &clientAddr, quint16 clientPort,
+                       const QString &details = "");
 
 private:
+    // ==================== 成员变量 ====================
+
+    // 网络相关
     QUdpSocket *m_udpSocket;
     quint16 m_serverPort;
     bool m_isRunning;
     bool m_forcePortReuse;
+    QHostAddress m_relayAddress;
 
-    // STUN相关
+    // 统计和状态
     int m_totalRequests;
     int m_totalResponses;
     QMap<QByteArray, RequestInfo> m_recentRequests;
-    QTimer *m_cleanupTimer;
 
-    // TURN相关
+    // 定时器
+    QTimer *m_cleanupTimer;
+    QTimer *m_allocationTimer;
+    QTimer *m_testTimer;
+    QTimer *m_selectionTimer;
+
+    // TURN分配管理
     QMap<QString, QSharedPointer<Allocation>> m_allocations;
     QMap<QPair<QString, quint16>, QString> m_relayMapping;
     QSet<quint16> m_usedRelayPorts;
-    QTimer *m_allocationTimer;
-    int m_maxAllocations = 1000;
+    int m_maxAllocations;
 
     // 认证配置
-    QString m_realm = "war3nat";
-    QMap<QString, QString> m_users; // username -> password (简单存储，生产用数据库)
+    QString m_realm;
+    QMap<QString, QString> m_users;
 
-    // 中继选择相关
+    // 中继服务器管理
     QVector<RelayServer> m_relayServers;
     QMap<QString, RelayTestResult> m_testResults;
-    QTimer *m_testTimer;
-    QTimer *m_selectionTimer;
+
+    // 多路径测试
+    QVector<PathTestConfig> m_testConfigs;
+    QMap<QString, PathTestResult> m_pathTestResults;
+    int m_completedTests;
+    bool m_multiPathTestInProgress;
 
     // 测试状态
     int m_currentTestIndex;
@@ -251,15 +361,14 @@ private:
     QMap<QString, QVector<qint64>> m_latencySamples;
     bool m_testInProgress;
 
-    // 配置
-    QHostAddress m_relayAddress;
+    // 配置参数
     quint16 m_minRelayPort;
     quint16 m_maxRelayPort;
     quint32 m_defaultLifetime;
     int m_testCount;
     int m_testTimeout;
     bool m_autoSelection;
-    int m_testInterval = 200; // 测试包间隔ms，防止洪泛
+    int m_testInterval;
 
     // 权重配置
     double m_latencyWeight;
@@ -269,5 +378,23 @@ private:
 
     // 线程池
     QThreadPool *m_threadPool;
+
+    // 服务器标识
+    QString m_serverId;
+
+    friend class PathTestTask;
 };
+
+// ==================== 路径测试任务类 ====================
+
+class PathTestTask : public QRunnable {
+public:
+    PathTestTask(War3Nat *parent, const PathTestConfig &config);
+    void run() override;
+
+private:
+    War3Nat *m_parent;
+    PathTestConfig m_config;
+};
+
 #endif // WAR3NAT_H
