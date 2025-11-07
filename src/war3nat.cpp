@@ -1643,83 +1643,198 @@ NATType War3Nat::detectNATType(const QVector<RelayServer> &stunServers) {
         return NAT_UNKNOWN;
     }
 
-    // 显式初始化所有变量
-    QByteArray response;
-    QHostAddress mappedAddr1, mappedAddr2, mappedAddr3;
-    quint16 mappedPort1 = 0, mappedPort2 = 0, mappedPort3 = 0;
+    LOG_INFO("🚀 开始完整NAT类型检测...");
 
-    bool test1Success = false;
-    bool test2Success = false;
-    bool test3Success = false;
+    // 存储所有测试结果
+    struct NATTestResult {
+        QHostAddress mappedAddr;
+        quint16 mappedPort;
+        bool success;
+        QString serverId;
+    };
 
-    // Test I: 标准绑定到服务器1
-    test1Success = sendSTUNBindingRequest(&socket, stunServers[0].address, stunServers[0].port,
-                                          response, mappedAddr1, mappedPort1, false, false);
-    if (!test1Success) {
-        LOG_WARNING("NAT检测测试I失败 - 可能被防火墙阻挡");
+    QVector<NATTestResult> testResults;
+    QSet<QString> uniqueIPs;
+    QSet<quint16> uniquePorts;
+
+    // ==================== 测试序列 ====================
+
+    // Test 1: 基础绑定到服务器1
+    NATTestResult test1;
+    test1.success = sendSTUNBindingRequest(&socket, stunServers[0].address, stunServers[0].port,
+                                           test1.mappedAddr, test1.mappedPort, false, false);
+    test1.serverId = stunServers[0].id;
+    testResults.append(test1);
+
+    if (!test1.success) {
+        LOG_WARNING("NAT检测测试1失败 - 可能被防火墙阻挡");
         return NAT_BLOCKED;
     }
+    uniqueIPs.insert(test1.mappedAddr.toString());
+    uniquePorts.insert(test1.mappedPort);
 
-    // Test II: 请求改变端口 (同一服务器)
-    test2Success = sendSTUNBindingRequest(&socket, stunServers[0].address, stunServers[0].port,
-                                          response, mappedAddr2, mappedPort2, false, true);
-    if (!test2Success) {
-        LOG_DEBUG("NAT检测测试II失败 - 对称UDP防火墙");
+    // Test 2: 改变端口到服务器1
+    NATTestResult test2;
+    test2.success = sendSTUNBindingRequest(&socket, stunServers[0].address, stunServers[0].port,
+                                           test2.mappedAddr, test2.mappedPort, false, true);
+    test2.serverId = stunServers[0].id;
+    testResults.append(test2);
+
+    if (!test2.success) {
+        LOG_DEBUG("NAT检测测试2失败 - 对称UDP防火墙");
         return NAT_SYMMETRIC_UDP_FIREWALL;
     }
+    uniqueIPs.insert(test2.mappedAddr.toString());
+    uniquePorts.insert(test2.mappedPort);
 
-    // 确保变量已正确初始化后再进行比较
-    if (!mappedAddr1.isNull() && !mappedAddr2.isNull() &&
-        (mappedAddr1 != mappedAddr2 || mappedPort1 != mappedPort2)) {
-        LOG_DEBUG("检测到对称NAT - 映射地址/端口在不同请求中发生变化");
-        return NAT_SYMMETRIC;
+    // Test 3: 改变IP到服务器1
+    NATTestResult test3;
+    test3.success = sendSTUNBindingRequest(&socket, stunServers[0].address, stunServers[0].port,
+                                           test3.mappedAddr, test3.mappedPort, true, false);
+    test3.serverId = stunServers[0].id;
+    testResults.append(test3);
+    if (test3.success) {
+        uniqueIPs.insert(test3.mappedAddr.toString());
+        uniquePorts.insert(test3.mappedPort);
     }
 
-    // Test III: 请求改变IP和端口 (第二个服务器)
-    test3Success = sendSTUNBindingRequest(&socket, stunServers[1].address, stunServers[1].port,
-                                          response, mappedAddr3, mappedPort3, true, true);
-    if (!test3Success) {
-        LOG_DEBUG("NAT检测测试III失败 - 端口限制锥形NAT");
-        return NAT_PORT_RESTRICTED_CONE;
+    // Test 4: 基础绑定到服务器2
+    NATTestResult test4;
+    test4.success = sendSTUNBindingRequest(&socket, stunServers[1].address, stunServers[1].port,
+                                           test4.mappedAddr, test4.mappedPort, false, false);
+    test4.serverId = stunServers[1].id;
+    testResults.append(test4);
+    if (test4.success) {
+        uniqueIPs.insert(test4.mappedAddr.toString());
+        uniquePorts.insert(test4.mappedPort);
     }
 
-    // 检查开放互联网
+    // Test 5: 改变IP+端口到服务器2
+    NATTestResult test5;
+    test5.success = sendSTUNBindingRequest(&socket, stunServers[1].address, stunServers[1].port,
+                                           test5.mappedAddr, test5.mappedPort, true, true);
+    test5.serverId = stunServers[1].id;
+    testResults.append(test5);
+    if (test5.success) {
+        uniqueIPs.insert(test5.mappedAddr.toString());
+        uniquePorts.insert(test5.mappedPort);
+    }
+
+    // ==================== 详细分析 ====================
+
+    LOG_DEBUG(QString("📊 NAT检测统计: 成功测试=%1, 唯一IP=%2, 唯一端口=%3")
+                  .arg(testResults.size())
+                  .arg(uniqueIPs.size())
+                  .arg(uniquePorts.size()));
+
+    // 输出详细映射结果
+    for (int i = 0; i < testResults.size(); ++i) {
+        if (testResults[i].success) {
+            LOG_DEBUG(QString("  测试%1: %2 -> %3:%4")
+                          .arg(i + 1)
+                          .arg(testResults[i].serverId)
+                          .arg(testResults[i].mappedAddr.toString())
+                          .arg(testResults[i].mappedPort));
+        }
+    }
+
+    // ==================== 完整NAT类型判断 ====================
+
+    // 1. 检查开放互联网
     QHostAddress localAddr = socket.localAddress();
     quint16 localPort = socket.localPort();
-    if (!mappedAddr1.isNull() && !localAddr.isNull() &&
-        mappedAddr1 == localAddr && mappedPort1 == localPort) {
-        LOG_DEBUG("检测到开放互联网 - 无NAT");
+    if (!test1.mappedAddr.isNull() && !localAddr.isNull() &&
+        test1.mappedAddr == localAddr && test1.mappedPort == localPort) {
+        LOG_INFO("✅ 检测到开放互联网 (无NAT)");
         return NAT_OPEN_INTERNET;
     }
 
-    // 检查全锥形NAT
-    if (!mappedAddr1.isNull() && !mappedAddr3.isNull() &&
-        mappedAddr1 == mappedAddr3 && mappedPort1 == mappedPort3) {
-        LOG_DEBUG("检测到全锥形NAT");
+    // 2. 检查对称NAT - 任何变化都导致新映射
+    if (test1.success && test2.success &&
+        (test1.mappedAddr != test2.mappedAddr || test1.mappedPort != test2.mappedPort)) {
+        LOG_INFO("🔄 检测到对称型NAT - 端口变更导致新映射");
+        return NAT_SYMMETRIC;
+    }
+
+    // 3. 检查运营商级NAT (CGNAT) - 多个不同IP但端口一致
+    if (uniqueIPs.size() > 2 && uniquePorts.size() == 1) {
+        LOG_INFO("🏢 检测到运营商级NAT (CGNAT) - 多个出口IP共享端口");
+        return NAT_CARRIER_GRADE;
+    }
+
+    // 4. 检查双重NAT - 多层映射特征
+    if (test1.success && test4.success &&
+        test1.mappedAddr != test4.mappedAddr &&
+        uniquePorts.size() > 1) {
+        LOG_INFO("🔗 检测到双重NAT - 多层映射");
+        return NAT_DOUBLE_NAT;
+    }
+
+    // 5. 检查完全锥形NAT - 所有测试得到相同映射
+    bool allSameMapping = true;
+    for (int i = 1; i < testResults.size(); ++i) {
+        if (testResults[i].success &&
+            (testResults[i].mappedAddr != test1.mappedAddr ||
+             testResults[i].mappedPort != test1.mappedPort)) {
+            allSameMapping = false;
+            break;
+        }
+    }
+    if (allSameMapping) {
+        LOG_INFO("🎯 检测到完全锥形NAT - 所有测试映射一致");
         return NAT_FULL_CONE;
     }
 
-    LOG_DEBUG("检测到限制锥形NAT");
-    return NAT_RESTRICTED_CONE;
+    // 6. 检查IP限制型NAT
+    if (test3.success && test1.mappedAddr != test3.mappedAddr &&
+        test1.mappedPort == test3.mappedPort) {
+        LOG_INFO("🔒 检测到IP限制型NAT - IP变更影响映射");
+        return NAT_IP_RESTRICTED;
+    }
+
+    // 7. 检查端口限制锥形NAT
+    if (test5.success && test1.mappedAddr != test5.mappedAddr) {
+        LOG_INFO("🚪 检测到端口限制锥形NAT - 服务器变更影响映射");
+        return NAT_PORT_RESTRICTED_CONE;
+    }
+
+    // 8. 检查限制锥形NAT
+    if (test4.success && test1.mappedAddr == test4.mappedAddr &&
+        test1.mappedPort == test4.mappedPort) {
+        LOG_INFO("🛡️ 检测到限制锥形NAT - 基础映射一致");
+        return NAT_RESTRICTED_CONE;
+    }
+
+    // 9. 对称UDP防火墙
+    if (!test2.success && test1.success) {
+        LOG_INFO("🔥 检测到对称型UDP防火墙");
+        return NAT_SYMMETRIC_UDP_FIREWALL;
+    }
+
+    LOG_WARNING("❓ 无法确定NAT类型，返回未知");
+    return NAT_UNKNOWN;
 }
 
-bool War3Nat::sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr, quint16 serverPort,
-                                     QByteArray &response, QHostAddress &mappedAddr, quint16 &mappedPort,
-                                     bool changeIP, bool changePort) {
+bool War3Nat::sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr,
+                                     quint16 serverPort, QHostAddress &mappedAddr,
+                                     quint16 &mappedPort, bool changeIP, bool changePort) {
     QByteArray request;
     QDataStream stream(&request, QIODevice::WriteOnly);
     stream.setByteOrder(QDataStream::BigEndian);
 
+    // STUN消息头
     stream << quint16(0x0001); // Binding Request
-    stream << quint16(0); // Placeholder for length
-    stream << quint32(0x2112A442);
+    stream << quint16(0);      // 长度占位符
+    stream << quint32(0x2112A442); // Magic Cookie
+
     QByteArray transactionId = generateTransactionId();
     stream.writeRawData(transactionId.constData(), 12);
 
+    // 添加CHANGE-REQUEST属性（如果需要）
     quint16 msgLen = 0;
     if (changeIP || changePort) {
-        stream << quint16(0x0003); // CHANGE-REQUEST
-        stream << quint16(4);
+        stream << quint16(0x0003); // CHANGE-REQUEST类型
+        stream << quint16(4);      // 属性长度
         quint32 changeValue = 0;
         if (changeIP) changeValue |= 0x4;
         if (changePort) changeValue |= 0x2;
@@ -1727,39 +1842,58 @@ bool War3Nat::sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &ser
         msgLen += 8;
     }
 
-    // Update length
+    // 更新消息长度
     stream.device()->seek(2);
     stream << msgLen;
 
+    // 发送请求
     qint64 bytesSent = socket->writeDatagram(request, serverAddr, serverPort);
     if (bytesSent <= 0) {
         LOG_ERROR(QString("发送STUN请求失败: %1").arg(socket->errorString()));
         return false;
     }
 
-    if (!socket->waitForReadyRead(m_testTimeout)) {
-        LOG_WARNING("STUN响应超时");
+    // 等待响应
+    if (!socket->waitForReadyRead(5000)) { // 5秒超时
+        LOG_WARNING(QString("STUN响应超时: %1:%2").arg(serverAddr.toString()).arg(serverPort));
         return false;
     }
 
+    // 读取响应
+    QByteArray response;
     response.resize(socket->pendingDatagramSize());
     QHostAddress senderAddr;
     quint16 senderPort;
     socket->readDatagram(response.data(), response.size(), &senderAddr, &senderPort);
 
-    if (response.size() < 20) return false;
+    if (response.size() < 20) {
+        LOG_WARNING("STUN响应数据太小");
+        return false;
+    }
 
+    // 验证消息类型
+    quint16 messageType = (static_cast<quint8>(response[0]) << 8) | static_cast<quint8>(response[1]);
+    if (messageType != 0x0101) { // Binding Response
+        LOG_WARNING("不是STUN绑定响应");
+        return false;
+    }
+
+    // 解析XOR-MAPPED-ADDRESS属性
     auto attributes = parseAttributes(response);
-    for (const auto &attr : qAsConst(attributes)) {
+    for (const auto &attr : attributes) {
         if (attr.type == STUN_ATTR_XOR_MAPPED_ADDRESS && attr.length >= 8) {
             quint8 family = static_cast<quint8>(attr.value[1]);
-            if (family != 0x01) return false; // 只支持IPv4
+            if (family != 0x01) {
+                LOG_WARNING("不支持非IPv4地址");
+                return false; // 只支持IPv4
+            }
 
             mappedAddr = parseXorAddress(attr.value, 0, mappedPort);
             return true;
         }
     }
 
+    LOG_WARNING("未找到XOR-MAPPED-ADDRESS属性");
     return false;
 }
 

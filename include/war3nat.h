@@ -56,16 +56,19 @@ enum AttributeType {
     STUN_ATTR_ERROR_CODE = 0x0009
 };
 
-// NAT类型
+// NAT类型枚举 - 完整分类
 enum NATType {
-    NAT_UNKNOWN,
-    NAT_OPEN_INTERNET,
-    NAT_FULL_CONE,
-    NAT_RESTRICTED_CONE,
-    NAT_PORT_RESTRICTED_CONE,
-    NAT_SYMMETRIC,
-    NAT_SYMMETRIC_UDP_FIREWALL,
-    NAT_BLOCKED
+    NAT_UNKNOWN = 0,              // 未知
+    NAT_OPEN_INTERNET = 1,        // 开放互联网（无NAT）
+    NAT_FULL_CONE = 2,            // 完全锥形NAT
+    NAT_RESTRICTED_CONE = 3,      // 限制锥形NAT
+    NAT_PORT_RESTRICTED_CONE = 4, // 端口限制锥形NAT
+    NAT_SYMMETRIC = 5,            // 对称型NAT
+    NAT_SYMMETRIC_UDP_FIREWALL = 6, // 对称型UDP防火墙
+    NAT_BLOCKED = 7,              // 被阻挡
+    NAT_DOUBLE_NAT = 8,           // 双重NAT
+    NAT_CARRIER_GRADE = 9,        // 运营商级NAT（CGNAT）
+    NAT_IP_RESTRICTED = 10        // IP限制型NAT
 };
 
 // ==================== 数据结构定义 ====================
@@ -303,9 +306,9 @@ private:
     QByteArray generateNonce();
 
     // NAT检测
-    bool sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr, quint16 serverPort,
-                                QByteArray &response, QHostAddress &mappedAddr, quint16 &mappedPort,
-                                bool changeIP = false, bool changePort = false);
+    bool sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr,
+                                         quint16 serverPort, QHostAddress &mappedAddr,
+                                         quint16 &mappedPort, bool changeIP, bool changePort);
 
     // ==================== 日志方法 ====================
     void logRequest(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
