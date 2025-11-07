@@ -296,6 +296,7 @@ private:
     QByteArray createTestPacket(int sequence, const QByteArray &serverId);
     QByteArray createPathTestPacket(int sequence, const QByteArray &testId);
     bool parseTestResponse(const QByteArray &data, int &sequence, QByteArray &serverId);
+    bool processTestMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
 
     // 资源分配
     QHostAddress allocateRelayAddress();
@@ -307,8 +308,8 @@ private:
 
     // NAT检测
     bool sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &serverAddr,
-                                         quint16 serverPort, QHostAddress &mappedAddr,
-                                         quint16 &mappedPort, bool changeIP, bool changePort);
+                                quint16 serverPort, QHostAddress &mappedAddr,
+                                quint16 &mappedPort, bool changeIP, bool changePort);
 
     // ==================== 日志方法 ====================
     void logRequest(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);

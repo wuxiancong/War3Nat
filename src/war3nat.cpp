@@ -177,7 +177,10 @@ void War3Nat::onReadyRead() {
 
             LOG_DEBUG(QString("📨 收到来自 %1:%2 的数据, 大小: %3 字节")
                           .arg(clientAddr.toString()).arg(clientPort).arg(bytesRead));
-
+            // 测试消息
+            if (processTestMessage(datagram, clientAddr, clientPort)) {
+                continue; // 如果是测试消息，已处理，跳过后续处理
+            }
             // 使用线程池异步处理
             m_threadPool->start([this, datagram, clientAddr, clientPort]() {
                 if (datagram.size() >= 20) {
@@ -1147,6 +1150,64 @@ bool War3Nat::processTestResponse(const QByteArray &data) {
     return true;
 }
 
+bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort) {
+    QString message = QString::fromUtf8(data).trimmed();
+
+    // 定义测试消息模式
+    QVector<QString> testPatterns = {
+        "TEST|CONNECTIVITY",
+        "TEST|PING",
+        "PING|NetworkDetector",
+        "HELLO|War3Bot",
+        "PING",
+        "TEST"
+    };
+
+    bool isTestMessage = false;
+    QString responseMessage;
+
+    // 检查是否是测试消息
+    for (const QString &pattern : qAsConst(testPatterns)) {
+        if (message.contains(pattern, Qt::CaseInsensitive)) {
+            isTestMessage = true;
+
+            // 根据不同的测试消息生成不同的响应
+            if (message.contains("CONNECTIVITY", Qt::CaseInsensitive)) {
+                responseMessage = "TEST|CONNECTIVITY|OK|War3Nat_Server_v3.0";
+            } else if (message.contains("PING", Qt::CaseInsensitive)) {
+                responseMessage = "TEST|PONG|" + QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
+            } else if (message.contains("HELLO", Qt::CaseInsensitive)) {
+                responseMessage = "HELLO|War3Nat|READY|Port:" + QString::number(m_serverPort);
+            } else {
+                responseMessage = "RESPONSE|OK|Timestamp:" +
+                                  QString::number(QDateTime::currentMSecsSinceEpoch());
+            }
+            break;
+        }
+    }
+
+    // 如果是测试消息，发送响应
+    if (isTestMessage) {
+        QByteArray response = responseMessage.toUtf8();
+        qint64 bytesSent = m_udpSocket->writeDatagram(response, clientAddr, clientPort);
+
+        if (bytesSent > 0) {
+            LOG_DEBUG(QString("🔄 测试响应 - 客户端: %1:%2 - 消息: %3 - 响应: %4")
+                          .arg(clientAddr.toString())
+                          .arg(clientPort)
+                          .arg(message)
+                          .arg(responseMessage));
+            m_totalResponses++;
+        } else {
+            LOG_ERROR(QString("发送测试响应失败: %1").arg(m_udpSocket->errorString()));
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 void War3Nat::completeServerTest(const QString &serverId) {
     RelayTestResult result;
     result.serverId = serverId;
@@ -1732,8 +1793,7 @@ NATType War3Nat::detectNATType(const QVector<RelayServer> &stunServers) {
         if (testResults[i].success) {
             LOG_DEBUG(QString("  测试%1: %2 -> %3:%4")
                           .arg(i + 1)
-                          .arg(testResults[i].serverId)
-                          .arg(testResults[i].mappedAddr.toString())
+                          .arg(testResults[i].serverId, testResults[i].mappedAddr.toString())
                           .arg(testResults[i].mappedPort));
         }
     }
@@ -1880,7 +1940,7 @@ bool War3Nat::sendSTUNBindingRequest(QUdpSocket *socket, const QHostAddress &ser
 
     // 解析XOR-MAPPED-ADDRESS属性
     auto attributes = parseAttributes(response);
-    for (const auto &attr : attributes) {
+    for (const auto &attr : qAsConst(attributes)) {
         if (attr.type == STUN_ATTR_XOR_MAPPED_ADDRESS && attr.length >= 8) {
             quint8 family = static_cast<quint8>(attr.value[1]);
             if (family != 0x01) {
