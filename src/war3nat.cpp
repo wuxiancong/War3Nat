@@ -1155,12 +1155,7 @@ bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &cli
 
     // 定义测试消息模式
     QVector<QString> testPatterns = {
-        "TEST|CONNECTIVITY",
-        "TEST|PING",
-        "PING|NetworkDetector",
-        "HELLO|War3Bot",
-        "PING",
-        "TEST"
+        "TEST|CONNECTIVITY"
     };
 
     bool isTestMessage = false;
@@ -1174,13 +1169,9 @@ bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &cli
             // 根据不同的测试消息生成不同的响应
             if (message.contains("CONNECTIVITY", Qt::CaseInsensitive)) {
                 responseMessage = "TEST|CONNECTIVITY|OK|War3Nat_Server_v3.0";
-            } else if (message.contains("PING", Qt::CaseInsensitive)) {
-                responseMessage = "TEST|PONG|" + QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
-            } else if (message.contains("HELLO", Qt::CaseInsensitive)) {
-                responseMessage = "HELLO|War3Nat|READY|Port:" + QString::number(m_serverPort);
             } else {
-                responseMessage = "RESPONSE|OK|Timestamp:" +
-                                  QString::number(QDateTime::currentMSecsSinceEpoch());
+                responseMessage = "DEFAULT_RESPONSE|Message received at " +
+                                  QDateTime::currentDateTime().toString("hh:mm:ss.zzz").toUtf8();
             }
             break;
         }
@@ -1195,8 +1186,7 @@ bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &cli
             LOG_DEBUG(QString("🔄 测试响应 - 客户端: %1:%2 - 消息: %3 - 响应: %4")
                           .arg(clientAddr.toString())
                           .arg(clientPort)
-                          .arg(message)
-                          .arg(responseMessage));
+                          .arg(message, responseMessage));
             m_totalResponses++;
         } else {
             LOG_ERROR(QString("发送测试响应失败: %1").arg(m_udpSocket->errorString()));
