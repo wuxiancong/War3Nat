@@ -161,7 +161,8 @@ void War3Nat::stopServer() {
 
 // ==================== 网络数据接收 ====================
 
-void War3Nat::onReadyRead() {
+void War3Nat::onReadyRead()
+{
     if (!m_udpSocket) return;
 
     while (m_udpSocket->hasPendingDatagrams()) {
@@ -177,11 +178,24 @@ void War3Nat::onReadyRead() {
 
             LOG_DEBUG(QString("📨 收到来自 %1:%2 的数据, 大小: %3 字节")
                           .arg(clientAddr.toString()).arg(clientPort).arg(bytesRead));
-            // 测试消息
-            if (processTestMessage(datagram, clientAddr, clientPort)) {
-                continue; // 如果是测试消息，已处理，跳过后续处理
+
+            // 首先检查是否是应用层消息（非STUN/TURN）
+            QString message = QString(datagram).trimmed();
+
+            // 处理 REGISTER_RELAY 消息
+            if (message.startsWith("REGISTER_RELAY|")) {
+                LOG_INFO("🔄 处理 REGISTER_RELAY 消息，转发到P2P服务器");
+                processRegisterRelayMessage(datagram, clientAddr, clientPort);
+                continue;
             }
-            // 使用线程池异步处理
+            else if (message.startsWith("TEST|")) {
+                // 测试消息
+                LOG_INFO("🔄 处理 TEST 消息");
+                processTestMessage(datagram, clientAddr, clientPort);
+                continue;
+            }
+
+            // 使用线程池异步处理STUN/TURN消息
             m_threadPool->start([this, datagram, clientAddr, clientPort]() {
                 if (datagram.size() >= 20) {
                     quint16 messageType = (static_cast<quint8>(datagram[0]) << 8) | static_cast<quint8>(datagram[1]);
@@ -200,8 +214,11 @@ void War3Nat::onReadyRead() {
                             LOG_WARNING(QString("未知的STUN/TURN消息类型: 0x%1")
                                             .arg(messageType, 4, 16, QLatin1Char('0')));
                         }
+                    } else if (magicCookie == 0x524F5554) { // "ROUT"
+                        handlePathTestRequest(datagram, clientAddr, clientPort);
+                        return;
                     } else {
-                        // 测试响应消息
+                        // 其他消息类型
                         if (!processTestResponse(datagram)) {
                             // 尝试处理路径测试响应
                             int sequence = 0;
@@ -732,6 +749,41 @@ void War3Nat::handleDataIndication(const QByteArray &data, const QHostAddress &c
     }
 }
 
+void War3Nat::handlePathTestRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort)
+{
+    if (data.size() < 12) return;
+
+    QDataStream stream(data);
+    stream.setByteOrder(QDataStream::BigEndian);
+
+    quint32 magic;
+    stream >> magic;
+    if (magic != 0x524F5554) return; // 不是路径测试请求
+
+    quint16 seq;
+    stream >> seq;
+
+    quint16 idSize;
+    stream >> idSize;
+    if (data.size() < 12 + idSize) return;
+
+    QByteArray testIdBytes;
+    testIdBytes.resize(idSize);
+    stream.readRawData(testIdBytes.data(), idSize);
+
+    quint64 timestamp;
+    stream >> timestamp;
+
+    // 立即回复相同的包（作为响应）
+    QByteArray response = data;
+
+    qint64 bytesSent = m_udpSocket->writeDatagram(response, clientAddr, clientPort);
+    if (bytesSent > 0) {
+        LOG_DEBUG(QString("📨 回复路径测试请求: %1 序列 %2")
+                      .arg(QString::fromUtf8(testIdBytes)).arg(seq));
+    }
+}
+
 // ==================== 认证相关 ====================
 
 bool War3Nat::authenticateRequest(const QByteArray &data, const QByteArray &transactionId,
@@ -1150,7 +1202,133 @@ bool War3Nat::processTestResponse(const QByteArray &data) {
     return true;
 }
 
-bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort) {
+void War3Nat::forwardToP2PServer(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort)
+{
+    // P2P服务器地址和端口 - 可以从配置读取或硬编码
+    QHostAddress p2pServerAddr = QHostAddress("127.0.0.1"); // 本地P2P服务器
+    quint16 p2pServerPort = 6112; // P2P服务器端口
+
+    // 构建转发消息，包含原始客户端信息
+    QByteArray forwardData = data;
+
+    // 可选：在消息中添加转发标记，便于P2P服务器识别
+    if (!data.startsWith("FORWARDED|")) {
+        QString originalMessage = QString(data);
+        forwardData = QString("FORWARDED|%1|%2|%3|%4")
+                          .arg(clientAddr.toString())
+                          .arg(clientPort)
+                          .arg(QDateTime::currentMSecsSinceEpoch())
+                          .arg(originalMessage)
+                          .toUtf8();
+    }
+
+    qint64 bytesSent = m_udpSocket->writeDatagram(forwardData, p2pServerAddr, p2pServerPort);
+
+    if (bytesSent > 0) {
+        LOG_DEBUG(QString("✅ 应用消息转发成功: %1:%2 -> P2P服务器 (%3 字节)")
+                      .arg(clientAddr.toString()).arg(clientPort).arg(bytesSent));
+        m_totalResponses++;
+    } else {
+        LOG_ERROR(QString("❌ 应用消息转发失败: %1").arg(m_udpSocket->errorString()));
+    }
+}
+
+void War3Nat::processRegisterRelayMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort)
+{
+    QString message = QString(data);
+    QStringList parts = message.split('|');
+
+    if (parts.size() < 6) {
+        LOG_WARNING(QString("❌ 无效的REGISTER_RELAY格式: %1").arg(message));
+        return;
+    }
+
+    QString gameId = parts[1];
+    QString relayIp = parts[2];
+    QString relayPort = parts[3];
+    QString natType = parts[4];
+    QString status = parts[5];
+
+    LOG_INFO(QString("🔄 处理中继注册: 客户端 %1:%2, 游戏ID: %3 中继 %4:%5, NAT: %6 状态: %7")
+                 .arg(clientAddr.toString()).arg(clientPort)
+                 .arg(gameId, relayIp, relayPort, natType, status));
+
+    // 验证中继地址是否有效（是否由本服务器分配）
+    bool isValidRelay = validateRelayAddress(relayIp, relayPort.toUShort(), clientAddr, clientPort);
+
+    if (isValidRelay) {
+        LOG_INFO("✅ 中继地址验证通过，转发到P2P服务器");
+
+        // 直接转发到P2P服务器
+        forwardToP2PServer(data, clientAddr, clientPort);
+
+        // 可选：发送即时确认
+        sendRelayRegistrationAck(clientAddr, clientPort, relayIp, relayPort);
+    } else {
+        LOG_WARNING("❌ 中继地址验证失败，可能不是由本服务器分配");
+
+        // 发送错误响应
+        QByteArray errorResponse = QString("REGISTER_RELAY_ERROR|INVALID_RELAY_ADDRESS|%1|%2")
+                                       .arg(relayIp, relayPort)
+                                       .toUtf8();
+        m_udpSocket->writeDatagram(errorResponse, clientAddr, clientPort);
+    }
+}
+
+bool War3Nat::validateRelayAddress(const QString &relayIp, quint16 relayPort, const QHostAddress &clientAddr, quint16 clientPort)
+{
+    // 检查中继IP是否匹配本服务器
+    if (relayIp != m_relayAddress.toString() && relayIp != "127.0.0.1" && relayIp != "localhost") {
+        LOG_WARNING(QString("中继IP不匹配: %1 != %2").arg(relayIp, m_relayAddress.toString()));
+        return false;
+    }
+
+    // 检查中继端口是否在有效范围内
+    if (relayPort < m_minRelayPort || relayPort > m_maxRelayPort) {
+        LOG_WARNING(QString("中继端口超出范围: %1, 有效范围: %2-%3")
+                        .arg(relayPort).arg(m_minRelayPort).arg(m_maxRelayPort));
+        return false;
+    }
+
+    // 检查该端口是否已分配
+    if (!m_usedRelayPorts.contains(relayPort)) {
+        LOG_WARNING(QString("中继端口未分配: %1").arg(relayPort));
+        return false;
+    }
+
+    // 可选：检查分配记录是否匹配
+    for (auto it = m_allocations.begin(); it != m_allocations.end(); ++it) {
+        const auto &allocation = it.value();
+        if (allocation->relayPort == relayPort &&
+            allocation->clientAddr == clientAddr &&
+            allocation->clientPort == clientPort) {
+            return true; // 找到匹配的分配记录
+        }
+    }
+
+    LOG_WARNING("未找到匹配的分配记录");
+    return false;
+}
+
+void War3Nat::sendRelayRegistrationAck(const QHostAddress &clientAddr, quint16 clientPort, const QString &relayIp, const QString &relayPort)
+{
+    QString transactionId = QString(generateTransactionId().toHex().left(8));
+
+    QByteArray ackMessage = QString("REGISTER_RELAY_ACK|%1|%2|%3")
+                                .arg(transactionId, relayIp, relayPort)
+                                .toUtf8();
+
+    qint64 bytesSent = m_udpSocket->writeDatagram(ackMessage, clientAddr, clientPort);
+
+    if (bytesSent > 0) {
+        LOG_DEBUG(QString("✅ 中继注册确认已发送: %1 字节").arg(bytesSent));
+    } else {
+        LOG_ERROR("❌ 中继注册确认发送失败");
+    }
+}
+
+bool War3Nat::processTestMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort)
+{
     QString message = QString::fromUtf8(data).trimmed();
 
     // 定义测试消息模式
