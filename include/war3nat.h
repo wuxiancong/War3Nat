@@ -178,6 +178,9 @@ private:
     // 加密和ID生成
     QByteArray generateTransactionId();
 
+    // 将原始数据转换为十六进制字符串
+    QString bytesToHex(const QByteArray &data, int bytesPerLine = 16);
+
     // ==================== 日志方法 ====================
     void logRequest(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void logResponse(const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);

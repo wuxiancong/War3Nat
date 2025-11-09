@@ -122,11 +122,17 @@ void War3Nat::stopServer() {
 
 void War3Nat::onReadyRead()
 {
-    if (!m_udpSocket) return;
+    if (!m_udpSocket) {
+        LOG_ERROR("onReadyRead called but m_udpSocket is null!");
+        return;
+    }
 
     while (m_udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
-        datagram.resize(m_udpSocket->pendingDatagramSize());
+        qint64 pendingSize = m_udpSocket->pendingDatagramSize();
+        if (pendingSize <= 0) continue; // 避免无效大小
+
+        datagram.resize(pendingSize);
 
         QHostAddress clientAddr;
         quint16 clientPort;
@@ -135,50 +141,77 @@ void War3Nat::onReadyRead()
         if (bytesRead > 0) {
             m_totalRequests++;
 
-            LOG_DEBUG(QString("📨 收到来自 %1:%2 的数据, 大小: %3 字节")
-                          .arg(clientAddr.toString()).arg(clientPort).arg(bytesRead));
+            // ==================== 详细日志 - 级别 1 (基础信息) ====================
+            LOG_INFO("==========================================================");
+            LOG_INFO(QString("📨 [RECV] 收到来自 %1:%2 的UDP包, 大小: %3 字节")
+                         .arg(clientAddr.toString()).arg(clientPort).arg(bytesRead));
 
-            // 首先检查是否是应用层消息（非STUN/TURN）
-            QString message = QString(datagram).trimmed();
+            // ==================== 详细日志 - 级别 2 (原始数据) ====================
+            LOG_INFO("[RAW DATA DUMP]:\n" + bytesToHex(datagram));
 
-            // 处理 REGISTER_RELAY 消息
-            if (message.startsWith("REGISTER_RELAY|")) {
-                LOG_INFO("🔄 处理 REGISTER_RELAY 消息，转发到P2P服务器");
-                processRegisterRelayMessage(datagram, clientAddr, clientPort);
-                continue;
-            }
-            else if (message.startsWith("TEST|")) {
-                // 测试消息
-                LOG_INFO("🔄 处理 TEST 消息");
+            // 尝试将数据包解析为文本（用于非STUN/TURN消息）
+            QString message = QString::fromUtf8(datagram).trimmed();
+
+            // ==================== 详细日志 - 级别 3 (逻辑分支判断) ====================
+
+            // 检查是否是应用层消息
+            if (message.startsWith("TEST|")) {
+                LOG_INFO("✅ [CLASSIFY] 识别为 [TEST] 消息. 开始处理...");
                 processTestMessage(datagram, clientAddr, clientPort);
+                LOG_INFO("==========================================================\n");
+                continue; // 处理完毕，继续下一个包
+            }
+            if (message.startsWith("REGISTER_RELAY|")) {
+                LOG_INFO("✅ [CLASSIFY] 识别为 [REGISTER_RELAY] 消息. 开始处理...");
+                processRegisterRelayMessage(datagram, clientAddr, clientPort);
+                LOG_INFO("==========================================================\n");
                 continue;
             }
 
-            // 使用线程池异步处理STUN/TURN消息
-            m_threadPool->start([this, datagram, clientAddr, clientPort]() {
-                if (datagram.size() >= 20) {
-                    quint16 messageType = (static_cast<quint8>(datagram[0]) << 8) | static_cast<quint8>(datagram[1]);
-                    quint32 magicCookie = (static_cast<quint8>(datagram[4]) << 24) |
-                                          (static_cast<quint8>(datagram[5]) << 16) |
-                                          (static_cast<quint8>(datagram[6]) << 8) |
-                                          static_cast<quint8>(datagram[7]);
+            // 检查是否是STUN/TURN消息
+            if (datagram.size() >= 20) {
+                // 提前解析头部信息用于日志
+                quint16 messageType = (static_cast<quint8>(datagram[0]) << 8) | static_cast<quint8>(datagram[1]);
+                quint16 messageLength = (static_cast<quint8>(datagram[2]) << 8) | static_cast<quint8>(datagram[3]);
+                quint32 magicCookie = (static_cast<quint8>(datagram[4]) << 24) |
+                                      (static_cast<quint8>(datagram[5]) << 16) |
+                                      (static_cast<quint8>(datagram[6]) << 8) |
+                                      static_cast<quint8>(datagram[7]);
+                QByteArray transactionId = datagram.mid(8, 12);
 
-                    if (magicCookie == 0x2112A442) {
-                        // STUN/TURN协议消息
+                LOG_INFO(QString("📦 [HEADER PARSE] 消息类型: 0x%1, 长度: %2, Magic Cookie: 0x%3, 事务ID: %4...")
+                             .arg(messageType, 4, 16, QChar('0'))
+                             .arg(messageLength)
+                             .arg(magicCookie, 8, 16, QChar('0'))
+                             .arg(QString(transactionId.toHex().left(8))));
+
+                if (magicCookie == 0x2112A442) {
+                    LOG_INFO("✅ [CLASSIFY] Magic Cookie匹配! 识别为 [STUN/TURN] 协议包.");
+                    // 使用线程池异步处理，避免阻塞主线程
+                    m_threadPool->start([this, datagram, clientAddr, clientPort, messageType]() {
                         if (messageType == STUN_BINDING_REQUEST) {
+                            LOG_INFO("➡️ [DISPATCH] 分派到 handleSTUNRequest (Binding Request)");
                             handleSTUNRequest(datagram, clientAddr, clientPort);
                         } else if (messageType >= 0x0003 && messageType <= 0x0017) {
+                            LOG_INFO("➡️ [DISPATCH] 分派到 handleTURNRequest (TURN Request)");
                             handleTURNRequest(datagram, clientAddr, clientPort);
                         } else {
-                            LOG_WARNING(QString("未知的STUN/TURN消息类型: 0x%1")
-                                            .arg(messageType, 4, 16, QLatin1Char('0')));
+                            LOG_WARNING(QString("⚠️ [DISPATCH] 未知STUN/TURN消息类型: 0x%1. 丢弃.")
+                                            .arg(messageType, 4, 16, QChar('0')));
                         }
-                    } else if (magicCookie == 0x524F5554) { // "ROUT"
-                        handlePathTestRequest(datagram, clientAddr, clientPort);
-                        return;
-                    }
+                    });
+                } else if (magicCookie == 0x524F5554) { // "ROUT"
+                    LOG_INFO("✅ [CLASSIFY] Magic Cookie匹配! 识别为 [Path Test] 协议包.");
+                    handlePathTestRequest(datagram, clientAddr, clientPort);
                 }
-            });
+                else {
+                    LOG_WARNING(QString("❌ [CLASSIFY] 无法识别的数据包. Magic Cookie不匹配 (0x%1). 可能是普通文本或未知协议.")
+                                    .arg(magicCookie, 8, 16, QChar('0')));
+                }
+            } else {
+                LOG_WARNING(QString("❌ [CLASSIFY] 数据包太小 (%1字节), 无法成为STUN/TURN包. 丢弃.").arg(bytesRead));
+            }
+            LOG_INFO("==========================================================\n");
         }
     }
 }
@@ -1183,6 +1216,18 @@ QByteArray War3Nat::generateTransactionId() {
     QRandomGenerator *gen = QRandomGenerator::global();
     gen->fillRange(reinterpret_cast<quint32*>(id.data()), 3);
     return id;
+}
+
+QString War3Nat::bytesToHex(const QByteArray &data, int bytesPerLine)
+{
+    QString hexString;
+    for (int i = 0; i < data.size(); ++i) {
+        if (i > 0 && i % bytesPerLine == 0) {
+            hexString += "\n";
+        }
+        hexString += QString("%1 ").arg(static_cast<quint8>(data[i]), 2, 16, QChar('0')).toUpper();
+    }
+    return hexString;
 }
 
 // ==================== 日志方法 ====================
