@@ -130,7 +130,7 @@ void War3Nat::onReadyRead()
     while (m_udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
         qint64 pendingSize = m_udpSocket->pendingDatagramSize();
-        if (pendingSize <= 0) continue; // 避免无效大小
+        if (pendingSize <= 0) continue;
 
         datagram.resize(pendingSize);
 
@@ -141,25 +141,18 @@ void War3Nat::onReadyRead()
         if (bytesRead > 0) {
             m_totalRequests++;
 
-            // ==================== 详细日志 - 级别 1 (基础信息) ====================
             LOG_INFO("==========================================================");
             LOG_INFO(QString("📨 [RECV] 收到来自 %1:%2 的UDP包, 大小: %3 字节")
                          .arg(clientAddr.toString()).arg(clientPort).arg(bytesRead));
-
-            // ==================== 详细日志 - 级别 2 (原始数据) ====================
             LOG_INFO("[RAW DATA DUMP]:\n" + bytesToHex(datagram));
 
-            // 尝试将数据包解析为文本（用于非STUN/TURN消息）
+            // 检查是否是应用层文本消息
             QString message = QString::fromUtf8(datagram).trimmed();
-
-            // ==================== 详细日志 - 级别 3 (逻辑分支判断) ====================
-
-            // 检查是否是应用层消息
             if (message.startsWith("TEST|")) {
                 LOG_INFO("✅ [CLASSIFY] 识别为 [TEST] 消息. 开始处理...");
                 processTestMessage(datagram, clientAddr, clientPort);
                 LOG_INFO("==========================================================\n");
-                continue; // 处理完毕，继续下一个包
+                continue;
             }
             if (message.startsWith("REGISTER_RELAY|")) {
                 LOG_INFO("✅ [CLASSIFY] 识别为 [REGISTER_RELAY] 消息. 开始处理...");
@@ -168,26 +161,34 @@ void War3Nat::onReadyRead()
                 continue;
             }
 
-            // 检查是否是STUN/TURN消息
+            // ==================== 修正后的二进制协议处理逻辑 ====================
+
+            // 1. 首先检查是否是 "ROUT" 包 (Magic Cookie 在开头)
+            if (datagram.size() >= 4) {
+                quint32 routMagicCookie = (static_cast<quint8>(datagram[0]) << 24) |
+                                          (static_cast<quint8>(datagram[1]) << 16) |
+                                          (static_cast<quint8>(datagram[2]) << 8) |
+                                          static_cast<quint8>(datagram[3]);
+
+                if (routMagicCookie == 0x524F5554) { // "ROUT"
+                    LOG_INFO("✅ [CLASSIFY] Magic Cookie (0x524F5554) 匹配! 识别为 [Path Test] 协议包.");
+                    handlePathTestRequest(datagram, clientAddr, clientPort);
+                    LOG_INFO("==========================================================\n");
+                    continue; // 处理完毕
+                }
+            }
+
+            // 2. 如果不是 "ROUT" 包，再检查是否是 STUN/TURN 包 (Magic Cookie 在第4字节)
             if (datagram.size() >= 20) {
-                // 提前解析头部信息用于日志
-                quint16 messageType = (static_cast<quint8>(datagram[0]) << 8) | static_cast<quint8>(datagram[1]);
-                quint16 messageLength = (static_cast<quint8>(datagram[2]) << 8) | static_cast<quint8>(datagram[3]);
-                quint32 magicCookie = (static_cast<quint8>(datagram[4]) << 24) |
-                                      (static_cast<quint8>(datagram[5]) << 16) |
-                                      (static_cast<quint8>(datagram[6]) << 8) |
-                                      static_cast<quint8>(datagram[7]);
-                QByteArray transactionId = datagram.mid(8, 12);
+                quint32 stunMagicCookie = (static_cast<quint8>(datagram[4]) << 24) |
+                                          (static_cast<quint8>(datagram[5]) << 16) |
+                                          (static_cast<quint8>(datagram[6]) << 8) |
+                                          static_cast<quint8>(datagram[7]);
 
-                LOG_INFO(QString("📦 [HEADER PARSE] 消息类型: 0x%1, 长度: %2, Magic Cookie: 0x%3, 事务ID: %4...")
-                             .arg(messageType, 4, 16, QChar('0'))
-                             .arg(messageLength)
-                             .arg(magicCookie, 8, 16, QChar('0'))
-                             .arg(QString(transactionId.toHex().left(8))));
+                if (stunMagicCookie == 0x2112A442) {
+                    quint16 messageType = (static_cast<quint8>(datagram[0]) << 8) | static_cast<quint8>(datagram[1]);
+                    LOG_INFO("✅ [CLASSIFY] Magic Cookie (0x2112A442) 匹配! 识别为 [STUN/TURN] 协议包.");
 
-                if (magicCookie == 0x2112A442) {
-                    LOG_INFO("✅ [CLASSIFY] Magic Cookie匹配! 识别为 [STUN/TURN] 协议包.");
-                    // 使用线程池异步处理，避免阻塞主线程
                     m_threadPool->start([this, datagram, clientAddr, clientPort, messageType]() {
                         if (messageType == STUN_BINDING_REQUEST) {
                             LOG_INFO("➡️ [DISPATCH] 分派到 handleSTUNRequest (Binding Request)");
@@ -200,17 +201,13 @@ void War3Nat::onReadyRead()
                                             .arg(messageType, 4, 16, QChar('0')));
                         }
                     });
-                } else if (magicCookie == 0x524F5554) { // "ROUT"
-                    LOG_INFO("✅ [CLASSIFY] Magic Cookie匹配! 识别为 [Path Test] 协议包.");
-                    handlePathTestRequest(datagram, clientAddr, clientPort);
+                    LOG_INFO("==========================================================\n");
+                    continue; // 处理完毕
                 }
-                else {
-                    LOG_WARNING(QString("❌ [CLASSIFY] 无法识别的数据包. Magic Cookie不匹配 (0x%1). 可能是普通文本或未知协议.")
-                                    .arg(magicCookie, 8, 16, QChar('0')));
-                }
-            } else {
-                LOG_WARNING(QString("❌ [CLASSIFY] 数据包太小 (%1字节), 无法成为STUN/TURN包. 丢弃.").arg(bytesRead));
             }
+
+            // 3. 如果都不是，则为无法识别的包
+            LOG_WARNING("❌ [CLASSIFY] 无法识别的二进制数据包. 两种Magic Cookie均不匹配.");
             LOG_INFO("==========================================================\n");
         }
     }
