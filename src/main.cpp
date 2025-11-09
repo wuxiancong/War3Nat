@@ -6,6 +6,7 @@
 #include <QProcess>
 #include <QSettings>
 #include <QUdpSocket>
+#include <QTextCodec>
 #include <QCoreApplication>
 #include <QCommandLineParser>
 
@@ -52,7 +53,7 @@ bool killProcessOnPort(quint16 port) {
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 #endif
 
-    for (const QString &line : lines) {
+    for (const QString &line : qAsConst(lines)) {
         if (line.contains(QString(":%1").arg(port)) && line.contains("UDP")) {
 // 提取 PID
 #if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
@@ -142,6 +143,10 @@ bool forceFreePort(quint16 port) {
 }
 
 int main(int argc, char *argv[]) {
+    // 设置编码为 UTF-8
+    QTextCodec *codec = QTextCodec::codecForName("UTF-8");
+    QTextCodec::setCodecForLocale(codec);
+
     QCoreApplication app(argc, argv);
 
     // 设置应用信息

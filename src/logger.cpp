@@ -1,7 +1,11 @@
 #include "logger.h"
 #include <QDir>
 #include <QDebug>
-#include <iostream>
+#include <QTextCodec>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 Logger *Logger::m_instance = nullptr;
 
@@ -34,6 +38,14 @@ Logger::Logger(QObject *parent)
     , m_maxFileSize(10 * 1024 * 1024) // 默认10MB
     , m_backupCount(5) // 默认5个备份
 {
+#ifdef Q_OS_WIN
+    // Windows 下强制设置控制台编码为 UTF-8
+    SetConsoleOutputCP(65001);
+    system("chcp 65001 > nul");
+#endif
+
+    // 设置全局编码
+    QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));
 }
 
 Logger::~Logger()
@@ -87,7 +99,7 @@ void Logger::setLogFile(const QString &filename)
 
     // 解析日志文件基础信息
     QFileInfo fileInfo(filename);
-    m_logFileBaseName = fileInfo.completeBaseName(); // 不包含扩展名的文件名
+    m_logFileBaseName = fileInfo.completeBaseName();
     m_logFileDir = fileInfo.absolutePath();
 
     // 确保目录存在
@@ -100,8 +112,17 @@ void Logger::setLogFile(const QString &filename)
     if (m_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         m_stream = new QTextStream(m_logFile);
         m_stream->setCodec("UTF-8");
+        m_stream->setGenerateByteOrderMark(true); // 生成 BOM 标记
+
+        // 写入文件头信息
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+        QString header = QString("[%1] [INFO] 日志文件已创建，编码: UTF-8").arg(timestamp);
+        *m_stream << header << "\n";
+        m_stream->flush();
+
+        consoleOutput("日志文件已设置: " + filename);
     } else {
-        std::cerr << "Cannot open log file: " << filename.toStdString() << std::endl;
+        consoleOutput("无法打开日志文件: " + filename, true);
         delete m_logFile;
         m_logFile = nullptr;
     }
@@ -157,7 +178,6 @@ bool Logger::performLogRotation()
     for (int i = m_backupCount - 1; i >= 1; i--) {
         QString oldName = m_logFileBaseName + "_" + QString::number(i) + logExtension;
         QString newName = m_logFileBaseName + "_" + QString::number(i + 1) + logExtension;
-
         QFile::rename(logDir.filePath(oldName), logDir.filePath(newName));
     }
 
@@ -172,23 +192,32 @@ bool Logger::performLogRotation()
     if (m_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         m_stream = new QTextStream(m_logFile);
         m_stream->setCodec("UTF-8");
+        m_stream->setGenerateByteOrderMark(true);
 
         // 写入轮转提示信息
         QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
-        QString rotateMessage = QString("[%1] [INFO] Log file rotated, new file started")
-                                    .arg(timestamp);
+        QString rotateMessage = QString("[%1] [INFO] 日志文件已轮转，新文件开始").arg(timestamp);
         *m_stream << rotateMessage << "\n";
         m_stream->flush();
 
-        // 注意：这里不能使用 LOG_INFO，因为可能造成递归调用
-        std::cout << "Log file rotation completed successfully" << std::endl;
+        consoleOutput("日志文件轮转完成");
         return true;
     } else {
-        std::cerr << "Failed to reopen log file after rotation: " << m_logFileName.toStdString() << std::endl;
+        consoleOutput("轮转后无法重新打开日志文件: " + m_logFileName, true);
         delete m_logFile;
         m_logFile = nullptr;
         return false;
     }
+}
+
+void Logger::consoleOutput(const QString &message, bool isError)
+{
+    if (!m_consoleOutput) return;
+
+    QTextStream stream(isError ? stderr : stdout);
+    stream.setCodec("UTF-8");
+    stream << message << "\n";
+    stream.flush();
 }
 
 void Logger::debug(const QString &message)
@@ -232,24 +261,25 @@ void Logger::log(LogLevel level, const QString &message)
     }
 
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
-    QString logMessage = QString("[%1] [%2] %3")
-                             .arg(timestamp, levelStr, message);
+    QString logMessage = QString("[%1] [%2] %3").arg(timestamp, levelStr, message);
 
-    // 总是输出到控制台（用于调试）
-    std::cout << logMessage.toStdString() << std::endl;
-    std::cout.flush(); // 强制刷新
+    // 控制台输出
+    if (m_consoleOutput) {
+        consoleOutput(logMessage);
+    }
 
-    // 输出到文件
+    // 文件输出
     if (!m_stream && !m_logFileName.isEmpty()) {
         // 尝试重新打开文件
         m_logFile = new QFile(m_logFileName);
         if (m_logFile->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
             m_stream = new QTextStream(m_logFile);
             m_stream->setCodec("UTF-8");
-            std::cout << "重新打开日志文件成功: " << m_logFileName.toStdString() << std::endl;
+            m_stream->setGenerateByteOrderMark(true);
+
+            consoleOutput("重新打开日志文件成功: " + m_logFileName);
         } else {
-            std::cerr << "无法打开日志文件: " << m_logFileName.toStdString()
-                << " 错误: " << m_logFile->errorString().toStdString() << std::endl;
+            consoleOutput("无法打开日志文件: " + m_logFileName + " 错误: " + m_logFile->errorString(), true);
             delete m_logFile;
             m_logFile = nullptr;
             return;
@@ -258,12 +288,11 @@ void Logger::log(LogLevel level, const QString &message)
 
     if (m_stream) {
         *m_stream << logMessage << "\n";
-        m_stream->flush(); // 强制刷新到磁盘
-        m_logFile->flush(); // 双重保险
+        m_stream->flush();
     }
 
-    // 如果文件流仍然不可用，输出错误
-    if (!m_stream) {
-        std::cerr << "日志文件流不可用，消息丢失: " << logMessage.toStdString() << std::endl;
+    // 如果文件流不可用，输出错误
+    if (!m_stream && m_consoleOutput) {
+        consoleOutput("日志文件流不可用，消息丢失: " + logMessage, true);
     }
 }

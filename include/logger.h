@@ -67,7 +67,9 @@ private:
     void log(LogLevel level, const QString &message);
     bool rotateLogFileIfNeeded();
     bool performLogRotation();
+    void consoleOutput(const QString &message, bool isError = false);
 
+private:
     static Logger *m_instance;
     QFile *m_logFile;
     QTextStream *m_stream;
