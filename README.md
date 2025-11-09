@@ -44,7 +44,7 @@ cmake ..
 make -j$(nproc)
 
 # 4. 测试运行
-./war3nat --help
+./War3Nat --help
 
 # 5. 重新编译
 cd /root/War3Nat/build
@@ -57,16 +57,16 @@ rm -rf *
 # 系统服务配置
 ## 创建系统用户
 ```bash
-sudo useradd -r -s /bin/false -d /opt/war3nat war3nat
+sudo useradd -r -s /bin/false -d /opt/War3Nat War3Nat
 ```
 ## 创建目录
 ```bash
-sudo mkdir -p /var/log/war3nat /etc/war3nat
-sudo chown -R war3nat:war3nat /var/log/war3nat
+sudo mkdir -p /var/log/War3Nat /etc/War3Nat
+sudo chown -R War3Nat:War3Nat /var/log/War3Nat
 ```
 ## 配置服务
-war3nat.service:
-sudo nano /etc/systemd/system/war3nat.service
+War3Nat.service:
+sudo nano /etc/systemd/system/War3Nat.service
 ```bash
 [Unit]
 Description=War3Nat Warcraft III Proxy
@@ -76,7 +76,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/War3Nat/build
-ExecStart=/root/War3Nat/build/war3nat -p 6112
+ExecStart=/root/War3Nat/build/War3Nat -p 6112
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -93,7 +93,7 @@ sudo systemctl start war3nat
 sudo systemctl stop war3nat
 ```
 # 配置文件
-/etc/war3nat/war3nat.ini:
+/etc/War3Nat/War3Nat.ini:
 ```bash
 [server]
 port=3478
@@ -104,12 +104,12 @@ bind_address=0.0.0.0
 [log]
 level=info
 enable_console=true
-log_file=/var/log/war3nat/war3nat.log
+log_file=/var/log/War3Nat/War3Nat.log
 max_size=10485760
 backup_count=5
 
 [stun]
-protocol_version=5389
+protocol_version=5389q
 max_request_size=1024
 response_timeout=5000
 
@@ -121,23 +121,23 @@ max_requests_per_minute=1000
 # 使用方法
 ```bash
 # 命令行运行
-# 杀死所有包含 war3nat 的进程
-pkill -f war3nat
+# 杀死所有包含 War3Nat 的进程
+pkill -f War3Nat
 # 停止服务
 sudo systemctl stop war3nat
 # 启动服务
 sudo systemctl start war3nat
 # 查看状态
-sudo systemctl status war3nat
+sudo systemctl status war3natq
 # 查看日志
 sudo journalctl -u war3nat -f
 ```
 ```bash
-# 查看所有 war3nat 进程
-ps aux | grep war3nat
+# 查看所有 War3Nat 进程
+ps aux | grep War3Nat
 
-# 杀死所有 war3nat 进程
-pkill -f war3nat
+# 杀死所有 War3Nat 进程
+pkill -f War3Nat
 
 # 查看 3478 端口是否被监听
 netstat -tulpn | grep 3478
@@ -263,32 +263,32 @@ War3Nat/
 ├── CMakeLists.txt
 ├── War3Nat.pro
 ├── include/
-│   ├── war3nat.h
+│   ├── War3Nat.h
 │   └── logger.h
 ├── src/
 │   ├── main.cpp
-│   ├── war3nat.cpp
+│   ├── War3Nat.cpp
 │   └── logger.cpp
 ├── config/
-│   ├── war3nat.ini
-│   └── war3nat.service
+│   ├── War3Nat.ini
+│   └── War3Nat.service
 └── bin/
-    └── war3nat
+    └── War3Nat
 ```
 
 # 故障排查
 ```bash
 # 调试模式运行
-/root/War3Nat/build/war3nat -l debug
+/root/War3Nat/build/War3Nat -l debug
 
 # 检查服务状态
-sudo systemctl status war3nat
+sudo systemctl status War3Nat
 
 # 查看详细日志
-sudo journalctl -u war3nat --no-pager -n 50
+sudo journalctl -u War3Nat --no-pager -n 50
 
 # 调试模式运行
-./war3nat -l debug -p 6112
+./War3Nat -l debug -p 6112
 ```
 
 # 协议支持
@@ -329,38 +329,38 @@ War3Nat 获取到公网地址后，等待另一个客户端连接
 ERROR: Port 3478 is already in use
 
 # 解决方案：
-./war3nat -k -p 3478  # 终止占用进程
-./war3nat -f -p 3478  # 强制端口重用
+./War3Nat -k -p 3478  # 终止占用进程
+./War3Nat -f -p 3478  # 强制端口重用
 
 # 权限错误
 ERROR: Cannot bind to port 3478: Permission denied
 
 # 解决方案：
-sudo setcap 'cap_net_bind_service=+ep' /path/to/war3nat
+sudo setcap 'cap_net_bind_service=+ep' /path/to/War3Nat
 # 或者使用大于1024的端口
 ```
 
 # 调试模式
 ```bash
 # 启用详细日志
-./war3nat -l debug -p 3478
+./War3Nat -l debug -p 3478
 
 # 查看详细日志
-sudo journalctl -u war3nat --no-pager -n 100
+sudo journalctl -u War3Nat --no-pager -n 100
 
 # 实时日志监控
-sudo journalctl -u war3nat -f
+sudo journalctl -u War3Nat -f
 ```
 # 性能监控
 ```bash
 # 监控服务器性能
-top -p $(pgrep war3nat)
+top -p $(pgrep War3Nat)
 
 # 监控网络连接
 ss -u -a | grep 3478
 
 # 监控内存使用
-ps -o pid,ppid,cmd,%mem,%cpu -p $(pgrep war3nat)
+ps -o pid,ppid,cmd,%mem,%cpu -p $(pgrep War3Nat)
 ```
 # 客户端集成示例
 ## C++ 客户端使用
@@ -387,20 +387,20 @@ connect(&detector, &NetworkDetector::dualServerNATTestCompleted,
 # 卸载
 ```bash
 # 停止并禁用服务
-sudo systemctl stop war3nat
-sudo systemctl disable war3nat
+sudo systemctl stop War3Nat
+sudo systemctl disable War3Nat
 
 # 移除服务文件
-sudo rm /etc/systemd/system/war3nat.service
+sudo rm /etc/systemd/system/War3Nat.service
 
 # 移除应用程序
-sudo rm -rf /opt/war3nat
+sudo rm -rf /opt/War3Nat
 
 # 移除日志和配置
-sudo rm -rf /var/log/war3nat /etc/war3nat
+sudo rm -rf /var/log/War3Nat /etc/War3Nat
 
 # 移除系统用户
-sudo userdel war3nat
+sudo userdel War3Nat
 
 # 移除依赖包（如果需要）
 sudo apt remove qtbase5-dev qt5-qmake libqt5core5a libqt5network5
