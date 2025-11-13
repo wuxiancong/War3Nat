@@ -128,7 +128,7 @@ sudo systemctl stop war3nat
 # 启动服务
 sudo systemctl start war3nat
 # 查看状态
-sudo systemctl status war3natq
+sudo systemctl status war3nat
 # 查看日志
 sudo journalctl -u war3nat -f
 ```
