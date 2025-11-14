@@ -432,7 +432,7 @@ void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &
     }
 
     if (m_allocations.size() >= m_maxAllocations) {
-        QByteArray error = buildErrorResponse(transactionId, 413, "Request Too Large");
+        QByteArray error = buildErrorResponse(transactionId, 413, "Request Too Large", true);
         m_udpSocket->writeDatagram(error, clientAddr, clientPort);
         return;
     }
@@ -481,7 +481,7 @@ void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &
 
     if (m_allocations.contains(allocationId)) {
         LOG_WARNING("客户端已存在分配，发送错误响应");
-        QByteArray errorResponse = buildErrorResponse(transactionId, 437, "Allocation Mismatch");
+        QByteArray errorResponse = buildErrorResponse(transactionId, 437, "Allocation Mismatch", true);
         m_udpSocket->writeDatagram(errorResponse, clientAddr, clientPort);
         return;
     }
@@ -990,7 +990,7 @@ QByteArray War3Nat::buildChannelBindResponse(const QByteArray &transactionId) {
     return response;
 }
 
-QByteArray War3Nat::buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason, ool addAuthAttributes)
+QByteArray War3Nat::buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason, bool addAuthAttributes)
 {
     QByteArray response;
     QDataStream stream(&response, QIODevice::WriteOnly);
