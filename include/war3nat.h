@@ -151,7 +151,7 @@ private:
     QByteArray buildRefreshResponse(const QByteArray &transactionId, quint32 lifetime);
     QByteArray buildCreatePermissionResponse(const QByteArray &transactionId);
     QByteArray buildChannelBindResponse(const QByteArray &transactionId);
-    QByteArray buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason);
+    QByteArray buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason, bool addAuthAttributes = false);
 
     // ==================== 中继数据处理 ====================
     void relayDataToPeer(const QByteArray &data, const QHostAddress &fromAddr, quint16 fromPort,

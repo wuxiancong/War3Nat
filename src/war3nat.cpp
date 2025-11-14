@@ -402,8 +402,31 @@ void War3Nat::handleTURNRequest(const QByteArray &data, const QHostAddress &clie
 void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &clientAddr,
                                     quint16 clientPort, const QByteArray &transactionId) {
     QString username;
+    QByteArray integrity;
+
+    // 从请求中解析出 USERNAME 和 MESSAGE-INTEGRITY
+    auto attributes = parseAttributes(data);
+    for (const auto &attr : qAsConst(attributes)) {
+        if (attr.type == STUN_ATTR_USERNAME) {
+            username = QString::fromUtf8(attr.value);
+        } else if (attr.type == STUN_ATTR_MESSAGE_INTEGRITY) {
+            integrity = attr.value;
+        }
+    }
+
+    // ==================== 新的认证流程 ====================
+    // 如果第一次请求，连用户名都没有，直接返回401并附带 REALM 和 NONCE
+    if (username.isEmpty() || integrity.isEmpty()) {
+        LOG_WARNING("认证失败: 缺少用户名或完整性属性。发送401响应以启动二次握手。");
+        QByteArray error = buildErrorResponse(transactionId, 401, "Unauthorized", true);
+        m_udpSocket->writeDatagram(error, clientAddr, clientPort);
+        return;
+    }
+
+    // 如果有认证信息，则进行验证
     if (!authenticateRequest(data, transactionId, username, clientAddr, clientPort)) {
-        QByteArray error = buildErrorResponse(transactionId, 401, "Unauthorized");
+        LOG_WARNING("认证失败: 消息完整性校验失败或用户无效。");
+        QByteArray error = buildErrorResponse(transactionId, 401, "Unauthorized", true);
         m_udpSocket->writeDatagram(error, clientAddr, clientPort);
         return;
     }
@@ -420,7 +443,6 @@ void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &
     quint16 requestedTransport = 17; // UDP
     bool evenPortRequested = false;
 
-    auto attributes = parseAttributes(data);
     for (const auto &attr : qAsConst(attributes)) {
         switch (attr.type) {
         case TURN_ATTR_REQUESTED_TRANSPORT:
@@ -968,34 +990,50 @@ QByteArray War3Nat::buildChannelBindResponse(const QByteArray &transactionId) {
     return response;
 }
 
-QByteArray War3Nat::buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason) {
-    QByteArray reasonBytes = reason.toUtf8();
-    int reasonLen = reasonBytes.size();
-    int padding = (4 - reasonLen % 4) % 4;
-    int attrLen = 4 + reasonLen + padding;
-
+QByteArray War3Nat::buildErrorResponse(const QByteArray &transactionId, quint16 errorCode, const QString &reason, ool addAuthAttributes)
+{
     QByteArray response;
     QDataStream stream(&response, QIODevice::WriteOnly);
     stream.setByteOrder(QDataStream::BigEndian);
 
-    // 错误响应头部
-    stream << quint16(0x0111);  // Error Response
-    stream << quint16(attrLen);
-    stream << quint32(0x2112A442);
+    // 头部
+    stream << quint16(0x0111);      // Error Response
+    stream << quint16(0);           // Placeholder for length
+    stream << quint32(0x2112A442);  // Magic Cookie
     stream.writeRawData(transactionId.constData(), 12);
 
-    // ERROR-CODE属性
+    // ERROR-CODE 属性
+    QByteArray reasonBytes = reason.toUtf8();
+    int reasonPadding = (4 - (reasonBytes.size() % 4)) % 4;
     stream << quint16(STUN_ATTR_ERROR_CODE);
-    stream << quint16(4 + reasonLen);
-    stream << quint16(0);
-    stream << quint8(errorCode / 100);
-    stream << quint8(errorCode % 100);
-    stream.writeRawData(reasonBytes.constData(), reasonLen);
+    stream << quint16(4 + reasonBytes.size());
+    stream << quint32( ( (errorCode / 100) << 8 ) | (errorCode % 100) );
+    stream.writeRawData(reasonBytes.constData(), reasonBytes.size());
+    if (reasonPadding > 0) stream.writeRawData(QByteArray(reasonPadding, '\0').constData(), reasonPadding);
 
-    // 填充
-    for (int i = 0; i < padding; ++i) {
-        stream << quint8(0);
+    // ==================== 新增逻辑 ====================
+    if (addAuthAttributes && errorCode == 401) {
+        // REALM 属性
+        QByteArray realmBytes = m_realm.toUtf8();
+        int realmPadding = (4 - (realmBytes.size() % 4)) % 4;
+        stream << quint16(STUN_ATTR_REALM);
+        stream << quint16(realmBytes.size());
+        stream.writeRawData(realmBytes.constData(), realmBytes.size());
+        if (realmPadding > 0) stream.writeRawData(QByteArray(realmPadding, '\0').constData(), realmPadding);
+
+        // NONCE 属性 (生成一个随机的nonce)
+        QByteArray nonce = generateTransactionId(); // 复用这个函数生成随机字节
+        int noncePadding = (4 - (nonce.size() % 4)) % 4;
+        stream << quint16(STUN_ATTR_NONCE);
+        stream << quint16(nonce.size());
+        stream.writeRawData(nonce.constData(), nonce.size());
+        if (noncePadding > 0) stream.writeRawData(QByteArray(noncePadding, '\0').constData(), noncePadding);
     }
+    // ===============================================
+
+    // 最终更新长度
+    stream.device()->seek(2);
+    stream << quint16(response.size() - 20);
 
     return response;
 }
