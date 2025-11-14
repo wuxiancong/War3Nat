@@ -711,21 +711,34 @@ void War3Nat::handleDataIndication(const QByteArray &data, const QHostAddress &c
 
 void War3Nat::handlePathTestRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort)
 {
-    if (data.size() < 12) return;
+    // 增加对最小长度的检查，现在包含1字节的andRegister标志
+    if (data.size() < 17) { // 4+2+2+8+1 = 17 (假设 testId 长度为0)
+        LOG_WARNING(QString("❌ [Path Test] 数据包过短: %1 字节，期望至少 17 字节。").arg(data.size()));
+        return;
+    }
 
     QDataStream stream(data);
     stream.setByteOrder(QDataStream::BigEndian);
 
     quint32 magic;
     stream >> magic;
-    if (magic != 0x524F5554) return; // 不是路径测试请求
+    if (magic != 0x524F5554) {
+        LOG_WARNING("❌ [Path Test] Magic Cookie 不匹配 (已在 onReadyRead 检查过，此处为双重保险)。");
+        return; // 理论上不会执行
+    }
 
     quint16 seq;
     stream >> seq;
 
     quint16 idSize;
     stream >> idSize;
-    if (data.size() < 12 + idSize) return;
+
+    // 再次验证数据包长度是否足够包含 testId 和后续字段
+    if (data.size() < 12 + idSize + 1) { // 4+2+2(idSize) + idSize + 8(timestamp) + 1(flag)
+        LOG_WARNING(QString("❌ [Path Test] 根据ID长度计算，数据包不完整。期望 > %1, 实际 %2")
+                        .arg(12 + idSize).arg(data.size()));
+        return;
+    }
 
     QByteArray testIdBytes;
     testIdBytes.resize(idSize);
@@ -734,13 +747,34 @@ void War3Nat::handlePathTestRequest(const QByteArray &data, const QHostAddress &
     quint64 timestamp;
     stream >> timestamp;
 
-    // 立即回复相同的包（作为响应）
-    QByteArray response = data;
+    quint8 registerFlag;
+    stream >> registerFlag;
+    bool andRegister = (registerFlag == 1);
+
+    LOG_INFO(QString("✅ [Path Test] 解析到请求 - Test ID: %1, Seq: %2, 注册标志: %3")
+                 .arg(QString::fromUtf8(testIdBytes)).arg(seq).arg(andRegister ? "true" : "false"));
+
+    // ==================== 构建响应包 ====================
+    // 我们不再简单地回传原始数据包，而是重新构建它。
+    // 这更健壮，确保响应格式总是正确的，即使请求包末尾有额外数据。
+    QByteArray response;
+    QDataStream responseStream(&response, QIODevice::WriteOnly);
+    responseStream.setByteOrder(QDataStream::BigEndian);
+
+    responseStream << quint32(0x524F5554);                          // Magic
+    responseStream << seq;                                          // Sequence
+    responseStream << idSize;                                       // ID Length
+    responseStream.writeRawData(testIdBytes.constData(), idSize);   // ID
+    responseStream << timestamp;                                    // Timestamp
+    responseStream << registerFlag;                                 // andRegister Flag
+    // =========================================================
 
     qint64 bytesSent = m_udpSocket->writeDatagram(response, clientAddr, clientPort);
     if (bytesSent > 0) {
-        LOG_DEBUG(QString("📨 回复路径测试请求: %1 序列 %2")
-                      .arg(QString::fromUtf8(testIdBytes)).arg(seq));
+        LOG_INFO(QString("✅ [Path Test] 响应已发送给 %1:%2, 大小: %3 字节")
+                     .arg(clientAddr.toString()).arg(clientPort).arg(bytesSent));
+    } else {
+        LOG_ERROR(QString("❌ [Path Test] 响应发送失败到 %1:%2").arg(clientAddr.toString()).arg(clientPort));
     }
 }
 
