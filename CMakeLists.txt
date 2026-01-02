@@ -1,17 +1,24 @@
 cmake_minimum_required(VERSION 3.16)
 project(War3Nat VERSION 1.0.0 LANGUAGES CXX)
-set(CMAKE_MAKE_PROGRAM "D:/Qt/Tools/Ninja/ninja.exe" CACHE FILEPATH "Program used to build from makefiles" FORCE)
+if(WIN32)
+    if(EXISTS "D:/Qt/Tools/Ninja/ninja.exe")
+        set(CMAKE_MAKE_PROGRAM "D:/Qt/Tools/Ninja/ninja.exe" CACHE FILEPATH "Program used to build from makefiles" FORCE)
+    endif()
+endif()
 
 # 设置 C++ 标准
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找 Qt5
-find_package(Qt5 REQUIRED COMPONENTS Core Network)
-
-# 设置编译器选项
+# 编译器选项
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O2")
+    add_compile_options(-Wall -Wextra -O2)
+elseif(MSVC)
+    set(CMAKE_GENERATOR_PLATFORM Win32)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    add_compile_options("/utf-8" "/MP")
+    add_link_options("/NODEFAULTLIB:LIBCMT")
+    add_link_options("/NODEFAULTLIB:LIBCMTD")
 endif()
 
 # 包含当前目录
@@ -21,6 +28,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+
+# 查找 Qt5
+find_package(Qt5 REQUIRED COMPONENTS Core Network)
 
 # 头文件
 set(HEADERS

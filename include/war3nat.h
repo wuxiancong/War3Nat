@@ -138,7 +138,6 @@ private:
     void handleSendIndication(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
     void handleChannelBind(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort, const QByteArray &transactionId);
     void handleDataIndication(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
-    void handlePathTestRequest(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
 
     // ==================== 认证相关 ====================
     bool authenticateRequest(const QByteArray &data, const QByteArray &transactionId, QString &username,
@@ -163,13 +162,6 @@ private:
     QSharedPointer<Allocation> findAllocation(const QHostAddress &clientAddr, quint16 clientPort);
     QVector<STUNAttribute> parseAttributes(const QByteArray &data, int startPos = 20);
     QHostAddress parseXorAddress(const QByteArray &data, int pos, quint16 &port);
-
-    // 数据包处理
-    bool processTestMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
-    void forwardToP2PServer(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
-    void processRegisterRelayMessage(const QByteArray &data, const QHostAddress &clientAddr, quint16 clientPort);
-    bool validateRelayAddress(const QString &relayIp, quint16 relayPort, const QHostAddress &clientAddr, quint16 clientPort);
-    void sendRelayRegistrationAck(const QHostAddress &clientAddr, quint16 clientPort, const QString &relayIp, const QString &relayPort);
 
     // 资源分配
     QHostAddress allocateRelayAddress();
