@@ -14,6 +14,8 @@
 #include <QSharedPointer>
 #include <QThreadPool>
 
+#include "./securitywatchdog.h"
+
 // ==================== 枚举定义 ====================
 
 // STUN消息类型 (RFC 5389)
@@ -218,6 +220,9 @@ private:
 
     // 服务器标识
     QString m_serverId;
+
+    // 安全检查
+    SecurityWatchdog m_watchdog;
 };
 
 #endif // WAR3NAT_H

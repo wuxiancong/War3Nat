@@ -122,6 +122,7 @@ void War3Nat::stopServer() {
 
 void War3Nat::onReadyRead()
 {
+
     if (!m_udpSocket) {
         LOG_ERROR("onReadyRead 函数被调用，但 m_udpSocket 为空！");
         return;
@@ -137,9 +138,11 @@ void War3Nat::onReadyRead()
         QHostAddress clientAddr;
         quint16 clientPort;
         qint64 bytesRead = m_udpSocket->readDatagram(datagram.data(), datagram.size(), &clientAddr, &clientPort);
-
         if (bytesRead > 0) {
             m_totalRequests++;
+            if (!m_watchdog.checkUdpPacket(clientAddr, datagram.size())) {
+                continue;
+            }
             if (datagram.size() >= 20) {
                 quint32 stunMagicCookie = (static_cast<quint8>(datagram[4]) << 24) |
                                           (static_cast<quint8>(datagram[5]) << 16) |
