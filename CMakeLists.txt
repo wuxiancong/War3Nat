@@ -36,6 +36,7 @@ find_package(Qt5 REQUIRED COMPONENTS Core Network)
 set(HEADERS
     include/logger.h
     include/war3nat.h
+    include/securitywatchdog.h
 )
 
 # 源文件
@@ -43,6 +44,7 @@ set(SOURCES
     src/main.cpp
     src/logger.cpp
     src/war3nat.cpp
+    src/securitywatchdog.cpp
 )
 
 # set(CMAKE_EXE_LINKER_FLAGS "-static -static-libgcc -static-libstdc++")
