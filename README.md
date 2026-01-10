@@ -42,7 +42,7 @@ cd War3Nat
 
 # 4. 编译项目
 mkdir build && cd build
-cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local/War3Nat ..
 make -j$(nproc)
 
 # 5. 安装 (将安装到 /usr/local/bin 和 /etc/War3Nat)
@@ -136,7 +136,7 @@ Group=war3nat
 WorkingDirectory=/etc/War3Nat
 
 # 启动路径 (指向安装位置)
-ExecStart=/usr/local/bin/War3Nat -p 3478
+ExecStart=/usr/local/War3Nat/bin/War3Nat -p 3478
 
 # 自动重启策略
 Restart=always
