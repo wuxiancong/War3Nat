@@ -42,23 +42,24 @@ cd War3Nat
 
 # 4. 编译项目
 mkdir build && cd build
-cmake ..
+cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
 make -j$(nproc)
 
-# 5. 验证编译结果
-./War3Nat --help
+# 5. 安装 (将安装到 /usr/local/bin 和 /etc/War3Nat)
+sudo make install
+
+# 6. 验证安装结果
+War3Nat --help
 ```
-
-### 2. 重新编译 (更新代码后)
-
+### 2. 重新编译
 ```bash
-# 清理旧构建并重新编译
-cd ~/War3Nat/build
-rm -rf *
-cmake ..
+cd ~/War3Nat
+git pull
+cd build
 make -j$(nproc)
+sudo make install
+sudo systemctl restart war3nat
 ```
-
 ---
 
 ## ⚙️ 系统服务配置
@@ -70,14 +71,17 @@ make -j$(nproc)
 为了安全起见，建议使用非 root 用户运行服务。
 
 ```bash
-# 创建系统用户 War3Nat
-sudo useradd -r -s /bin/false -d /opt/War3Nat War3Nat
+# 1. 创建系统用户 War3Nat (无登录权限)
+sudo useradd -r -s /bin/false -d /etc/War3Nat war3nat
 
-# 创建日志与配置目录
-sudo mkdir -p /var/log/War3Nat /etc/War3Nat
+# 2. 创建日志目录
+sudo mkdir -p /var/log/War3Nat
 
-# 设置目录权限
-sudo chown -R War3Nat:War3Nat /var/log/War3Nat /etc/War3Nat
+# 3. 设置权限
+# 确保 war3nat 用户能写入日志
+sudo chown -R war3nat:war3nat /var/log/War3Nat
+# 确保 war3nat 用户能读取配置
+sudo chown -R war3nat:war3nat /etc/War3Nat
 ```
 
 ### 2. 安装配置文件
@@ -99,7 +103,7 @@ max_size=10485760
 backup_count=5
 
 [stun]
-protocol_version=5389q
+protocol_version=5389
 max_request_size=1024
 response_timeout=5000
 
@@ -123,15 +127,25 @@ After=network.target
 
 [Service]
 Type=simple
-# User=War3Nat 
-User=root
-WorkingDirectory=/root/War3Nat/build
-# 请根据实际二进制文件位置修改此处
-ExecStart=/root/War3Nat/build/War3Nat -p 3478
+
+# 使用专用用户运行
+User=war3nat
+Group=war3nat
+
+# 工作目录 (配置文件所在位置)
+WorkingDirectory=/etc/War3Nat
+
+# 启动路径 (指向安装位置)
+ExecStart=/usr/local/bin/War3Nat -p 3478
+
+# 自动重启策略
 Restart=always
 RestartSec=5
+
+# 日志输出
 StandardOutput=journal
 StandardError=journal
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
