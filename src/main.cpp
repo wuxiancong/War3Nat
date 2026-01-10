@@ -224,7 +224,7 @@ int main(int argc, char *argv[]) {
                 out << "\n[log]\n";
                 out << "level=info\n";
                 out << "enable_console=true\n";
-                out << "log_file=war3nat.log\n";
+                out << "log_file=/var/log/War3Bot/war3bot.log\n";
                 out << "max_size=10485760\n";
                 out << "backup_count=5\n";
                 defaultConfig.close();
