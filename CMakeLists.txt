@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(War3Nat VERSION 1.0.0 LANGUAGES CXX)
+
+# =========================================================
+# 1. 平台与编译器设置
+# =========================================================
+
 if(WIN32)
     if(EXISTS "D:/Qt/Tools/Ninja/ninja.exe")
         set(CMAKE_MAKE_PROGRAM "D:/Qt/Tools/Ninja/ninja.exe" CACHE FILEPATH "Program used to build from makefiles" FORCE)
@@ -21,13 +26,9 @@ elseif(MSVC)
     add_link_options("/NODEFAULTLIB:LIBCMTD")
 endif()
 
-# 包含当前目录
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-
-# 设置自动 MOC
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
+# =========================================================
+# 2. 依赖查找与源文件
+# =========================================================
 
 # 查找 Qt5
 find_package(Qt5 REQUIRED COMPONENTS Core Network)
@@ -47,31 +48,60 @@ set(SOURCES
     src/securitywatchdog.cpp
 )
 
-# set(CMAKE_EXE_LINKER_FLAGS "-static -static-libgcc -static-libstdc++")
+# =========================================================
+# 3. 构建目标配置
+# =========================================================
 
 # 创建可执行文件
 add_executable(War3Nat ${SOURCES} ${HEADERS})
 
-# 链接 Qt 库和网络库
-target_link_libraries(War3Nat  Qt5::Core Qt5::Network)
+# 设置包含目录 (优先使用 target_include_directories)
+target_include_directories(War3Nat PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    include
+)
 
-# 在 Windows 上链接 ws2_32 库
+# 链接 Qt 库
+target_link_libraries(War3Nat PRIVATE Qt5::Core Qt5::Network)
+
+# Windows 特有链接
 if(WIN32)
-    target_link_libraries(War3Nat  ws2_32)
+    target_link_libraries(War3Nat PRIVATE ws2_32)
 endif()
 
-# 设置包含目录
-target_include_directories(War3Nat  PRIVATE include)
+# =========================================================
+# 4. 安装配置
+# =========================================================
 
-# 安装目标
-install(TARGETS War3Nat  DESTINATION bin)
+# 1. 安装二进制文件
+# 默认安装到 /usr/local/bin (由 CMAKE_INSTALL_PREFIX 控制)
+install(TARGETS War3Nat RUNTIME DESTINATION bin)
 
-# 安装配置文件
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/war3nat.ini")
-    install(FILES config/war3nat.ini DESTINATION /etc/war3nat)
-endif()
+# 2. Linux 特有配置 (配置文件与服务)
+if(UNIX AND NOT APPLE)
+    # 定义标准配置目录 /etc/War3Nat
+    set(CONF_INSTALL_DIR "/etc/War3Nat")
+    set(SYSTEMD_INSTALL_DIR "/etc/systemd/system")
 
-# 安装 systemd 服务文件
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/war3nat.service")
-    install(FILES config/war3nat.service DESTINATION /etc/systemd/system)
+    # 安装配置文件 (war3nat.ini)
+    # 假设源码 config 目录下文件名是 war3nat.ini
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/war3nat.ini")
+        install(FILES config/war3nat.ini
+            DESTINATION "${CONF_INSTALL_DIR}"
+            PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ # 644 权限
+        )
+        message(STATUS "配置安装任务: config/war3nat.ini -> ${CONF_INSTALL_DIR}")
+    endif()
+
+    # 安装 Systemd 服务文件
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/war3nat.service")
+        install(FILES config/war3nat.service
+            DESTINATION "${SYSTEMD_INSTALL_DIR}"
+            PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ # 644 权限
+        )
+        message(STATUS "服务安装任务: config/war3nat.service -> ${SYSTEMD_INSTALL_DIR}")
+    endif()
+
+    # 提示信息
+    install(CODE "message(\"-- 安装完成。请运行 'sudo systemctl daemon-reload' 以加载新服务。\")")
 endif()
