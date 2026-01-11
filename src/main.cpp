@@ -355,7 +355,6 @@ int main(int argc, char *argv[]) {
     LOG_INFO("=== 服务器开始监听 ===");
 
     // 添加定时状态报告
-    // 添加定时状态报告
     QTimer *statusTimer = new QTimer(&app);
     QObject::connect(statusTimer, &QTimer::timeout, &app, [&nat, startTime = QDateTime::currentDateTime()]() {
         qint64 uptimeSeconds = startTime.secsTo(QDateTime::currentDateTime());
