@@ -472,7 +472,7 @@ void War3Nat::handleAllocateRequest(const QByteArray &data, const QHostAddress &
     m_usedRelayPorts.insert(relayPort);
 
     // 发送响应
-    QByteArray response = buildAllocateResponse(transactionId, relayAddr, relayPort, m_defaultLifetime);
+    QByteArray response = buildAllocateResponse(transactionId, clientAddr, clientPort, relayAddr, relayPort, m_defaultLifetime);
     m_udpSocket->writeDatagram(response, clientAddr, clientPort);
     m_totalResponses++;
 
@@ -806,30 +806,40 @@ QByteArray War3Nat::hmacSha1(const QByteArray &key, const QByteArray &message) {
 
 // ==================== TURN响应构建 ====================
 
-QByteArray War3Nat::buildAllocateResponse(const QByteArray &transactionId, const QHostAddress &relayAddr,
-                                          quint16 relayPort, quint32 lifetime) {
+QByteArray War3Nat::buildAllocateResponse(const QByteArray &transactionId,
+                                          const QHostAddress &clientAddr,
+                                          quint16 clientPort,
+                                          const QHostAddress &relayAddr,
+                                          quint16 relayPort,
+                                          quint32 lifetime) {
     QByteArray response;
     QDataStream stream(&response, QIODevice::WriteOnly);
     stream.setByteOrder(QDataStream::BigEndian);
 
-    // 响应头部
+    // 1. 响应头部
     stream << quint16(0x0103);  // Allocate Response
-    stream << quint16(32);      // 消息长度
+    stream << quint16(44);      // 消息长度 (总长度减去20字节头 = 12+12+12+8 = 44)
     stream << quint32(0x2112A442);
     stream.writeRawData(transactionId.constData(), 12);
 
-    // XOR-RELAYED-ADDRESS属性
-    stream << quint16(TURN_ATTR_XOR_RELAYED_ADDRESS);
+    // 2. XOR-MAPPED-ADDRESS 属性 (必须包含，让客户端知道自己的公网IP)
+    stream << quint16(0x0020);  // 属性类型: XOR-MAPPED-ADDRESS
+    stream << quint16(8);       // 属性长度: 8字节
+    stream << quint8(0);        // 保留位
+    stream << quint8(0x01);     // 地址族: IPv4
+    stream << quint16(clientPort ^ (0x2112A442 >> 16));         // 端口混淆
+    stream << quint32(clientAddr.toIPv4Address() ^ 0x2112A442); // IP混淆
+
+    // 3. XOR-RELAYED-ADDRESS 属性 (服务器分配给客户端的中继地址)
+    stream << quint16(0x0016);
     stream << quint16(8);
-    quint16 xoredPort = relayPort ^ (0x2112A442 >> 16);
-    quint32 xoredIP = relayAddr.toIPv4Address() ^ 0x2112A442;
     stream << quint8(0);
     stream << quint8(0x01);
-    stream << xoredPort;
-    stream << xoredIP;
+    stream << quint16(relayPort ^ (0x2112A442 >> 16));
+    stream << quint32(relayAddr.toIPv4Address() ^ 0x2112A442);
 
-    // LIFETIME属性
-    stream << quint16(TURN_ATTR_LIFETIME);
+    // 4. LIFETIME 属性
+    stream << quint16(0x000D);
     stream << quint16(4);
     stream << lifetime;
 

@@ -147,8 +147,8 @@ private:
     QByteArray hmacSha1(const QByteArray &key, const QByteArray &message);
 
     // ==================== TURN响应构建 ====================
-    QByteArray buildAllocateResponse(const QByteArray &transactionId, const QHostAddress &relayAddr,
-                                     quint16 relayPort, quint32 lifetime = 600);
+    QByteArray buildAllocateResponse(const QByteArray &transactionId, const QHostAddress &clientAddr, quint16 clientPort,
+                                     const QHostAddress &relayAddr, quint16 relayPort,  quint32 lifetime = 600);
     QByteArray buildRefreshResponse(const QByteArray &transactionId, quint32 lifetime);
     QByteArray buildCreatePermissionResponse(const QByteArray &transactionId);
     QByteArray buildChannelBindResponse(const QByteArray &transactionId);
